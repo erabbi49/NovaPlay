@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="white">#FFFFFFFF</color>
+    <color name="black">#FF000000</color>
+    <color name="nova_accent">#FFFF2D55</color>
+    <color name="nova_accent_container">#FFFFD9E0</color>
+    <color name="bg">#FFFFFFFF</color>
+    <color name="surface">#FFFFFFFF</color>
+    <color name="surface_variant">#FFF2F2F2</color>
+    <color name="on_surface">#FF0F0F0F</color>
+    <color name="on_surface_variant">#FF606060</color>
+    <color name="divider">#1F000000</color>
+    <color name="chip_bg">#FFF2F2F2</color>
+    <color name="chip_selected">#FF0F0F0F</color>
+    <color name="chip_selected_text">#FFFFFFFF</color>
+    <color name="thumb_placeholder">#FFE5E5E5</color>
+    <color name="badge_bg">#CC000000</color>
+    <color name="scrim">#99000000</color>
+    <color name="player_bg">#FF000000</color>
+    <bool name="light_bars">true</bool>
+</resources>

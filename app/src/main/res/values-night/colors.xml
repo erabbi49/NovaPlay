@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="nova_accent_container">#FF5C1226</color>
+    <color name="bg">#FF0F0F0F</color>
+    <color name="surface">#FF0F0F0F</color>
+    <color name="surface_variant">#FF272727</color>
+    <color name="on_surface">#FFF1F1F1</color>
+    <color name="on_surface_variant">#FFAAAAAA</color>
+    <color name="divider">#33FFFFFF</color>
+    <color name="chip_bg">#FF272727</color>
+    <color name="chip_selected">#FFF1F1F1</color>
+    <color name="chip_selected_text">#FF0F0F0F</color>
+    <color name="thumb_placeholder">#FF1F1F1F</color>
+    <bool name="light_bars">false</bool>
+</resources>

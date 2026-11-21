@@ -39,7 +39,13 @@ class LibraryScreen(activity: MainActivity) : Screen(activity) {
 
     private fun build() {
         content.removeAllViews()
-        content.addView(entry(R.drawable.ic_history, "History", count(Library.historyList().size)) { openHistory() })
+        content.addView(profileHeader())
+        val recent = Library.historyList()
+        if (recent.isEmpty()) {
+            content.addView(entry(R.drawable.ic_history, "History", "") { openHistory() })
+        } else {
+            content.addView(shelf("History", recent.take(12).map { it.video }) { openHistory() })
+        }
         content.addView(entry(R.drawable.ic_thumb_up, "Liked videos", count(Library.likedList().size)) {
             activity.push(VideoListScreen(activity, "Liked videos", "Videos you like appear here.", { Library.likedList() }))
         })
@@ -85,9 +91,90 @@ class LibraryScreen(activity: MainActivity) : Screen(activity) {
         content.addView(entry(R.drawable.ic_tune, "Settings", "") {
             ctx.startActivity(Intent(ctx, SettingsActivity::class.java))
         })
+        content.addView(Ui.spacer(ctx, 0, 16))
     }
 
     private fun count(n: Int): String = if (n == 0) "" else n.toString()
+
+    /** A big round initial, a name and two quick buttons, like the top of the YouTube "You" page. */
+    private fun profileHeader(): View {
+        val box = LinearLayout(ctx)
+        box.orientation = LinearLayout.VERTICAL
+        box.gravity = Gravity.CENTER_HORIZONTAL
+        box.setPadding(Ui.dp(ctx, 16), Ui.dp(ctx, 8), Ui.dp(ctx, 16), Ui.dp(ctx, 12))
+        val avatar = Ui.medium(Ui.textView(ctx, 30f, android.graphics.Color.WHITE, false, 1))
+        avatar.gravity = Gravity.CENTER
+        avatar.text = "N"
+        avatar.background = Ui.rounded(Ui.accent(ctx), Ui.dpf(ctx, 36f))
+        box.addView(avatar, Ui.lp(Ui.dp(ctx, 72), Ui.dp(ctx, 72)))
+        val name = Ui.medium(Ui.textView(ctx, 22f, Ui.text(ctx), false, 1))
+        name.text = "You"
+        name.gravity = Gravity.CENTER
+        box.addView(name, Ui.lp(Ui.WRAP, Ui.WRAP).also { it.topMargin = Ui.dp(ctx, 10) })
+        val watched = Library.historyList().size
+        val sub = Ui.textView(ctx, 13f, Ui.textDim(ctx), false, 1)
+        sub.text = if (watched == 0) "Your history, playlists and downloads" else "$watched watched \u00b7 ${Library.downloadList().count { it.state == DlState.DONE }} downloaded"
+        sub.gravity = Gravity.CENTER
+        box.addView(sub, Ui.lp(Ui.WRAP, Ui.WRAP).also { it.topMargin = Ui.dp(ctx, 2) })
+        val row = LinearLayout(ctx)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER
+        val settings = Ui.pill(ctx, "Settings", false)
+        settings.setOnClickListener { ctx.startActivity(Intent(ctx, SettingsActivity::class.java)) }
+        row.addView(settings, Ui.lp(Ui.WRAP, Ui.dp(ctx, 36)).also { it.rightMargin = Ui.dp(ctx, 8) })
+        val ads = Ui.pill(ctx, "Ad blocker", false)
+        ads.setOnClickListener { ctx.startActivity(Intent(ctx, AdBlockActivity::class.java)) }
+        row.addView(ads, Ui.lp(Ui.WRAP, Ui.dp(ctx, 36)))
+        box.addView(row, Ui.lp(Ui.WRAP, Ui.WRAP).also { it.topMargin = Ui.dp(ctx, 14) })
+        return box
+    }
+
+    /** A titled row of small video cards that scrolls sideways, with a "View all" button. */
+    private fun shelf(title: String, videos: List<Video>, onAll: () -> Unit): View {
+        val box = LinearLayout(ctx)
+        box.orientation = LinearLayout.VERTICAL
+        val head = LinearLayout(ctx)
+        head.orientation = LinearLayout.HORIZONTAL
+        head.gravity = Gravity.CENTER_VERTICAL
+        head.setPadding(Ui.dp(ctx, 16), Ui.dp(ctx, 8), Ui.dp(ctx, 12), Ui.dp(ctx, 8))
+        val t = Ui.medium(Ui.textView(ctx, 16f, Ui.text(ctx), false, 1))
+        t.text = title
+        head.addView(t, Ui.lp(0, Ui.WRAP).also { it.weight = 1f })
+        val all = Ui.pill(ctx, "View all", false)
+        all.setOnClickListener { onAll() }
+        head.addView(all, Ui.lp(Ui.WRAP, Ui.dp(ctx, 32)))
+        box.addView(head, Ui.lp(Ui.MATCH, Ui.WRAP))
+        val scroll = android.widget.HorizontalScrollView(ctx)
+        scroll.isHorizontalScrollBarEnabled = false
+        val strip = LinearLayout(ctx)
+        strip.orientation = LinearLayout.HORIZONTAL
+        strip.setPadding(Ui.dp(ctx, 12), 0, Ui.dp(ctx, 4), Ui.dp(ctx, 8))
+        for (v in videos) strip.addView(shelfCard(v), Ui.lp(Ui.dp(ctx, 164), Ui.WRAP).also { it.rightMargin = Ui.dp(ctx, 8) })
+        scroll.addView(strip, Ui.lp(Ui.WRAP, Ui.WRAP))
+        box.addView(scroll, Ui.lp(Ui.MATCH, Ui.WRAP))
+        return box
+    }
+
+    private fun shelfCard(v: Video): View {
+        val card = LinearLayout(ctx)
+        card.orientation = LinearLayout.VERTICAL
+        val thumb = ThumbBox(ctx, 16f / 9f, 10)
+        thumb.bind(v)
+        card.addView(thumb, Ui.lp(Ui.MATCH, Ui.WRAP))
+        val title = Ui.medium(Ui.textView(ctx, 13f, Ui.text(ctx), false, 2))
+        title.text = v.title
+        card.addView(title, Ui.lp(Ui.MATCH, Ui.WRAP).also { it.topMargin = Ui.dp(ctx, 6) })
+        val meta = Ui.textView(ctx, 12f, Ui.textDim(ctx), false, 1)
+        meta.text = v.uploader
+        meta.visibility = if (v.uploader.isEmpty()) View.GONE else View.VISIBLE
+        card.addView(meta, Ui.lp(Ui.MATCH, Ui.WRAP))
+        card.setOnClickListener { activity.openVideo(v) }
+        card.setOnLongClickListener {
+            VideoMenu.show(ctx, v, emptyList()) { url, name -> activity.openListing(url, name) }
+            true
+        }
+        return card
+    }
 
     private fun entry(icon: Int, label: String, trailing: String, onClick: () -> Unit): View {
         val row = LinearLayout(ctx)

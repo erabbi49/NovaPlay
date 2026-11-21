@@ -14,6 +14,8 @@
     <color name="chip_selected">#FF0F0F0F</color>
     <color name="chip_selected_text">#FFFFFFFF</color>
     <color name="thumb_placeholder">#FFE5E5E5</color>
+    <color name="sheet">#FFFFFFFF</color>
+    <color name="skeleton">#FFEAEAEA</color>
     <color name="badge_bg">#CC000000</color>
     <color name="scrim">#99000000</color>
     <color name="player_bg">#FF000000</color>

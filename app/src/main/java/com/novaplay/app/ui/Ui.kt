@@ -38,6 +38,14 @@ object Ui {
     fun chipSelected(ctx: Context): Int = ctx.getColor(R.color.chip_selected)
     fun chipSelectedText(ctx: Context): Int = ctx.getColor(R.color.chip_selected_text)
     fun placeholder(ctx: Context): Int = if (amoled()) 0xFF141414.toInt() else ctx.getColor(R.color.thumb_placeholder)
+    fun sheet(ctx: Context): Int = if (amoled()) 0xFF1A1A1A.toInt() else ctx.getColor(R.color.sheet)
+    fun skeleton(ctx: Context): Int = if (amoled()) 0xFF1A1A1A.toInt() else ctx.getColor(R.color.skeleton)
+
+    /** Roboto Medium: the weight used for titles, chips and buttons. */
+    fun <T : TextView> medium(t: T): T {
+        t.typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
+        return t
+    }
 
     fun lp(w: Int, h: Int): LinearLayout.LayoutParams = LinearLayout.LayoutParams(w, h)
 
@@ -83,12 +91,23 @@ object Ui {
 
     /** A rounded "chip" label, selected or not. */
     fun chip(ctx: Context, label: String, selected: Boolean): TextView {
-        val t = textView(ctx, 14f, if (selected) chipSelectedText(ctx) else text(ctx))
+        val t = medium(textView(ctx, 14f, if (selected) chipSelectedText(ctx) else text(ctx)))
         t.text = label
         t.gravity = android.view.Gravity.CENTER
         t.setPadding(dp(ctx, 12), 0, dp(ctx, 12), 0)
         t.background = rounded(if (selected) chipSelected(ctx) else chipBg(ctx), dpf(ctx, 8f))
         t.minHeight = dp(ctx, 32)
+        return t
+    }
+
+    /** A fully rounded 36dp button (Subscribe, action pills), selected = inverted colours. */
+    fun pill(ctx: Context, label: String, selected: Boolean): TextView {
+        val t = medium(textView(ctx, 14f, if (selected) chipSelectedText(ctx) else text(ctx)))
+        t.text = label
+        t.gravity = android.view.Gravity.CENTER
+        t.setPadding(dp(ctx, 16), 0, dp(ctx, 16), 0)
+        t.background = rounded(if (selected) chipSelected(ctx) else chipBg(ctx), dpf(ctx, 18f))
+        t.minHeight = dp(ctx, 36)
         return t
     }
 

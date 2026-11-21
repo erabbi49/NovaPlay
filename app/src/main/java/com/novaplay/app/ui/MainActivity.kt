@@ -25,21 +25,22 @@ import com.novaplay.app.web.Site
  * Everything inside is built in code (see [Screen]).
  */
 class MainActivity : BaseActivity() {
-    private class Tab(val id: String, val icon: Int, val label: String) {
+    private class Tab(val id: String, val icon: Int, val iconOn: Int, val label: String) {
         lateinit var image: ImageView
         lateinit var text: TextView
         lateinit var box: LinearLayout
     }
 
     private val tabs = listOf(
-        Tab(Nav.TAB_HOME, R.drawable.ic_home, "Home"),
-        Tab(Nav.TAB_SUBS, R.drawable.ic_subs, "Subscriptions"),
-        Tab(Nav.TAB_QUEUE, R.drawable.ic_queue, "Queue"),
-        Tab(Nav.TAB_DOWNLOADS, R.drawable.ic_download, "Downloads"),
-        Tab(Nav.TAB_LIBRARY, R.drawable.ic_library, "You")
+        Tab(Nav.TAB_HOME, R.drawable.ic_nav_home, R.drawable.ic_nav_home_on, "Home"),
+        Tab(Nav.TAB_SUBS, R.drawable.ic_nav_subs, R.drawable.ic_nav_subs_on, "Subscriptions"),
+        Tab(Nav.TAB_QUEUE, R.drawable.ic_nav_queue, R.drawable.ic_nav_queue_on, "Queue"),
+        Tab(Nav.TAB_DOWNLOADS, R.drawable.ic_nav_dl, R.drawable.ic_nav_dl_on, "Downloads"),
+        Tab(Nav.TAB_LIBRARY, R.drawable.ic_nav_you, R.drawable.ic_nav_you_on, "You")
     )
 
     private lateinit var content: FrameLayout
+    private lateinit var mini: MiniPlayerView
     private val roots = HashMap<String, Screen>()
     private val stacks = HashMap<String, ArrayList<Screen>>()
     private var tab = Nav.TAB_HOME
@@ -77,7 +78,8 @@ class MainActivity : BaseActivity() {
         val cp = Ui.lp(Ui.MATCH, 0)
         cp.weight = 1f
         root.addView(content, cp)
-        root.addView(MiniPlayerView(this) { PlayerActivity.show(this) }, Ui.lp(Ui.MATCH, Ui.WRAP))
+        mini = MiniPlayerView(this) { PlayerActivity.show(this) }
+        root.addView(mini, Ui.lp(Ui.MATCH, Ui.WRAP))
         root.addView(Ui.hr(this), Ui.lp(Ui.MATCH, Ui.dp(this, 1)))
 
         val nav = LinearLayout(this)
@@ -92,7 +94,7 @@ class MainActivity : BaseActivity() {
             val image = ImageView(this)
             image.setImageResource(t.icon)
             box.addView(image, Ui.lp(Ui.dp(this, 24), Ui.dp(this, 24)))
-            val text = Ui.textView(this, 10f, Ui.textDim(this), false, 1)
+            val text = Ui.textView(this, 10f, Ui.text(this), false, 1)
             text.text = t.label
             text.gravity = Gravity.CENTER
             box.addView(text, Ui.lp(Ui.WRAP, Ui.WRAP))
@@ -140,6 +142,7 @@ class MainActivity : BaseActivity() {
 
     override fun onResume() {
         super.onResume()
+        mini.refresh()
         if (started) shown?.onResume()
     }
 
@@ -168,11 +171,13 @@ class MainActivity : BaseActivity() {
 
     private fun render() {
         val next = topScreen()
+        // like the current YouTube app: every item has the same colour, the open one has a filled icon and a bolder label
         for (t in tabs) {
             val on = t.id == tab
-            val color = if (on) Ui.accent(this) else Ui.textDim(this)
-            t.image.setColorFilter(color)
-            t.text.setTextColor(color)
+            t.image.setImageResource(if (on) t.iconOn else t.icon)
+            t.image.setColorFilter(Ui.text(this))
+            t.text.setTextColor(Ui.text(this))
+            if (on) Ui.medium(t.text) else t.text.typeface = android.graphics.Typeface.DEFAULT
         }
         if (next === shown) return
         shown?.onHide()

@@ -3,6 +3,7 @@ package com.novaplay.app.ui
 import android.content.Context
 import android.view.Gravity
 import android.view.View
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.Switch
 import android.widget.TextView
@@ -90,6 +91,17 @@ class Form(private val ctx: Context, private val parent: LinearLayout) {
                 .setNegativeButton("Cancel", null)
                 .show()
         }
+    }
+
+    /** A row with an icon in front that opens another page, like the categories of the YouTube settings. */
+    fun nav(icon: Int, title: String, subtitle: String?, onClick: () -> Unit): TextView {
+        val r = row(title, subtitle)
+        val iv = ImageView(ctx)
+        iv.setImageResource(icon)
+        iv.setColorFilter(Ui.text(ctx))
+        r.box.addView(iv, 0, Ui.lp(Ui.dp(ctx, 24), Ui.dp(ctx, 24)).also { it.rightMargin = Ui.dp(ctx, 24) })
+        r.box.setOnClickListener { onClick() }
+        return r.subtitle
     }
 
     fun action(title: String, subtitle: String?, onClick: () -> Unit): TextView {

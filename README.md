@@ -7,14 +7,15 @@ Native Kotlin app (no web page wrapper), with a built-in uBlock-Origin-style ad 
 
 | | |
 |---|---|
-| **Home / Search / Channels** | Home feed with chips (Home, Newest, Best, HD, 4K and your own), search (or paste a link), channel and category pages, infinite scroll, pull to refresh |
-| **Player** | Own player screen: speed 0.25x-3x, quality picker, fullscreen (rotate or button), double-tap skip, swipe for brightness / volume, long-press for 2x, screen lock, loop, sleep timer, picture-in-picture, background play with notification controls |
-| **Ambient mode** | Soft glow behind the player that follows the colours of the video |
+| **Home / Search / Channels** | Home feed with chips (Home, Newest, Best, HD, 4K and your own), search (or paste a link), channel and category pages, page numbers (1 2 3 ...) or endless scrolling, pull to refresh, grey placeholder cards while loading, compact list option |
+| **Watch page** | YouTube-style layout: title and views, the video's tags (tap one to open that category), channel with Subscribe, action pills (like, share, download, watch later, save, copy link), related videos as big cards |
+| **Player** | Own player screen: speed 0.25x-4x, quality picker (separate cap for mobile data), fullscreen (rotate or button), double-tap skip, swipe for brightness / volume / seek (each switchable, with sensitivity), hold to speed up (1.5x-4x), pinch to zoom, screen lock, loop, sleep timer, picture-in-picture, background play with notification controls, YouTube-style settings sheet |
+| **Ambient mode** | "Enhanced" ambient light like the YouTube app / Morphe: the colours of the live video light the whole watch page and the black bars around the video, with settings for strength, blur, smoothing, dimming while scrolling and keeping text readable |
 | **Queue / Play next** | "Play next", "Add to queue", drag to reorder, swipe to remove, shuffle, save queue as a playlist, autoplay of the queue then related videos |
 | **Downloads** | In-app download (HLS and MP4), pause / resume, quality choice, Wi-Fi only option, notification with progress, plays offline, copy to gallery |
 | **Library ("You" tab)** | Watch history with resume position, liked videos, watch later, playlists, subscriptions (followed channels with a mixed feed), custom Home chips |
 | **Ad blocker** | uBlock Origin / Adblock Plus syntax engine with EasyList, EasyPrivacy, uBlock filters (+privacy, badware, unbreak), EasyList Adult. Network blocking, cosmetic filters, scriptlets, pop-up blocking, your own rules, list updates |
-| **Other** | Light / dark / AMOLED theme, share links into the app, open a video link straight from the browser, in-app browser (ad-blocked) for human-checks |
+| **Other** | Light / dark / AMOLED theme, settings in categories (Appearance, Playback, Gestures, Ambient, Downloads, ...), mini player, hide watched videos, copy link / title, share links into the app, open a video link straight from the browser, in-app browser (ad-blocked) for human-checks |
 
 Not included because it cannot work with this source: accounts and sign-in, comments, live chat, Shorts, YouTube-side subscriptions and notifications, casting.
 

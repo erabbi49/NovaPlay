@@ -1,5 +1,7 @@
 package com.novaplay.app.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import com.novaplay.app.R
@@ -58,9 +60,18 @@ object VideoMenu {
             s.add(R.drawable.ic_subs, "Go to $name") { openListing(video.uploaderUrl, video.uploader) }
         }
         s.add(R.drawable.ic_share, "Share") { share(ctx, video) }
+        s.add(R.drawable.ic_copy, "Copy link") { copy(ctx, video.url, "Link copied") }
+        s.add(R.drawable.ic_copy, "Copy title") { copy(ctx, video.title, "Title copied") }
         s.add(R.drawable.ic_browser, "Open in browser") { BrowserActivity.open(ctx, video.url) }
         for (e in extras) s.add(e.icon, e.label, e.action)
         s.show()
+    }
+
+    /** Puts [text] on the clipboard and says so with [message]. */
+    fun copy(ctx: Context, text: String, message: String) {
+        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("NovaPlay", text))
+        Dialogs.toast(ctx, message)
     }
 
     fun share(ctx: Context, video: Video) {

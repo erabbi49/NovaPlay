@@ -11,5 +11,7 @@
     <color name="chip_selected">#FFF1F1F1</color>
     <color name="chip_selected_text">#FF0F0F0F</color>
     <color name="thumb_placeholder">#FF1F1F1F</color>
+    <color name="sheet">#FF212121</color>
+    <color name="skeleton">#FF272727</color>
     <bool name="light_bars">false</bool>
 </resources>

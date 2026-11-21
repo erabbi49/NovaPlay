@@ -2,6 +2,7 @@ package com.novaplay.app.player
 
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -364,8 +365,21 @@ object Playback {
         )
     }
 
+    /** The streaming height cap that applies now: the mobile-data cap on a metered connection (if one is set), else the general one. 0 = no cap. */
+    fun qualityCap(): Int {
+        val mobile = Prefs.streamQualityMobile
+        if (mobile >= 0 && onMeteredNetwork()) return mobile
+        return Prefs.streamQuality
+    }
+
+    private fun onMeteredNetwork(): Boolean = try {
+        (app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).isActiveNetworkMetered
+    } catch (e: Exception) {
+        false
+    }
+
     private fun orderedCandidates(si: StreamInfo): List<String> {
-        val pref = Prefs.streamQuality
+        val pref = qualityCap()
         val mp4: List<StreamVariant> = if (pref > 0) {
             si.mp4.sortedWith(
                 compareBy<StreamVariant>(
@@ -423,7 +437,7 @@ object Playback {
 
     private fun applyQualitySettings() {
         val b = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO)
-        val cap = Prefs.streamQuality
+        val cap = qualityCap()
         if (cap > 0) b.setMaxVideoSize(Int.MAX_VALUE, cap) else b.clearVideoSizeConstraints()
         player.trackSelectionParameters = b.build()
     }
@@ -637,7 +651,7 @@ object Playback {
         forcedHeight = height
         if (isPlayingHls) {
             val b = p.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO)
-            val cap = Prefs.streamQuality
+            val cap = qualityCap()
             if (height == 0) {
                 if (cap > 0) b.setMaxVideoSize(Int.MAX_VALUE, cap) else b.clearVideoSizeConstraints()
             } else {

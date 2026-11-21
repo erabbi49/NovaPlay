@@ -16,7 +16,7 @@ import com.novaplay.app.R
 import com.novaplay.app.data.Library
 
 /** The search box with the user's recent searches. Pasting a link of the site opens it directly. */
-class SearchScreen(activity: MainActivity) : Screen(activity) {
+class SearchScreen(activity: MainActivity, private val initial: String = "") : Screen(activity) {
     private val ctx = activity
     private val root = LinearLayout(ctx)
     private val input = EditText(ctx)
@@ -76,6 +76,11 @@ class SearchScreen(activity: MainActivity) : Screen(activity) {
         go.setOnClickListener { submit(input.text.toString()) }
         bar.addView(go)
         root.addView(bar, Ui.lp(Ui.MATCH, Ui.WRAP))
+
+        if (initial.isNotEmpty()) {
+            input.setText(initial)
+            input.setSelection(initial.length)
+        }
 
         history.orientation = LinearLayout.VERTICAL
         val scroll = ScrollView(ctx)

@@ -17,6 +17,7 @@ import coil.dispose
 import coil.load
 import com.novaplay.app.R
 import com.novaplay.app.data.Library
+import com.novaplay.app.data.Prefs
 import com.novaplay.app.data.Video
 import com.novaplay.app.web.Site
 import kotlin.math.abs
@@ -83,9 +84,9 @@ private fun clipRounded(view: View, radiusDp: Int) {
 }
 
 private fun badge(ctx: Context): TextView {
-    val t = Ui.textView(ctx, 11f, Color.WHITE, true, 1)
+    val t = Ui.medium(Ui.textView(ctx, 12f, Color.WHITE, false, 1))
     t.setBackgroundResource(R.drawable.bg_badge)
-    t.setPadding(Ui.dp(ctx, 5), Ui.dp(ctx, 2), Ui.dp(ctx, 5), Ui.dp(ctx, 2))
+    t.setPadding(Ui.dp(ctx, 5), Ui.dp(ctx, 1), Ui.dp(ctx, 5), Ui.dp(ctx, 2))
     t.visibility = View.GONE
     return t
 }
@@ -120,11 +121,12 @@ class ThumbBox(context: Context, ratio: Float, cornerDp: Int) : AspectFrame(cont
 
     fun bind(v: Video) {
         Thumbs.load(image, v.thumb, v.thumbAlt)
-        val d = Ui.formatSeconds(v.durationSec)
+        val d = if (Prefs.thumbBadges) Ui.formatSeconds(v.durationSec) else ""
         duration.text = d
         duration.visibility = if (d.isEmpty()) View.GONE else View.VISIBLE
-        quality.text = v.quality
-        quality.visibility = if (v.quality.isEmpty()) View.GONE else View.VISIBLE
+        val q = if (Prefs.thumbBadges) v.quality else ""
+        quality.text = q
+        quality.visibility = if (q.isEmpty()) View.GONE else View.VISIBLE
         val pos = Library.positionFor(v.id)
         val total = v.durationSec * 1000L
         if (pos > 0L && total > 0L) {
@@ -146,22 +148,29 @@ internal fun avatarColor(name: String): Int {
     return Color.HSVToColor(floatArrayOf(hue, 0.45f, 0.55f))
 }
 
-/** Big feed card: full-width thumbnail, channel avatar, two-line title, meta line and a "more" button. */
+/**
+ * Big feed card, laid out like the current YouTube app: a rounded thumbnail inset from the screen edges, then the
+ * channel avatar, a two-line title, the meta line and a "more" button.
+ */
 class VideoCardView(context: Context) : LinearLayout(context) {
-    private val thumb = ThumbBox(context, 16f / 9f, 0)
-    private val avatar = Ui.textView(context, 15f, Color.WHITE, true, 1)
-    private val title = Ui.textView(context, 15f, Ui.text(context), false, 2)
-    private val meta = Ui.textView(context, 12f, Ui.textDim(context), false, 1)
+    private val thumb = ThumbBox(context, 16f / 9f, 12)
+    private val avatar = Ui.medium(Ui.textView(context, 15f, Color.WHITE, false, 1))
+    private val title = Ui.medium(Ui.textView(context, 14f, Ui.text(context), false, 2))
+    private val meta = Ui.textView(context, 12f, Ui.textDim(context), false, 2)
     private val more = Ui.iconButton(context, R.drawable.ic_more, "More", Ui.textDim(context), 40, 8)
 
     init {
         orientation = VERTICAL
         layoutParams = ViewGroup.LayoutParams(Ui.MATCH, Ui.WRAP)
-        addView(thumb, Ui.lp(Ui.MATCH, Ui.WRAP))
+        title.setLineSpacing(0f, 1.1f)
+        val side = Ui.dp(context, 12)
+        val tp = Ui.lp(Ui.MATCH, Ui.WRAP)
+        tp.setMargins(side, Ui.dp(context, 6), side, 0)
+        addView(thumb, tp)
         val info = LinearLayout(context)
         info.orientation = HORIZONTAL
         info.gravity = Gravity.TOP
-        info.setPadding(Ui.dp(context, 12), Ui.dp(context, 10), Ui.dp(context, 4), Ui.dp(context, 14))
+        info.setPadding(side, Ui.dp(context, 12), Ui.dp(context, 0), Ui.dp(context, 12))
         avatar.gravity = Gravity.CENTER
         val size = Ui.dp(context, 36)
         info.addView(avatar, Ui.lp(size, size))
@@ -173,7 +182,9 @@ class VideoCardView(context: Context) : LinearLayout(context) {
         cp.weight = 1f
         cp.leftMargin = Ui.dp(context, 12)
         info.addView(col, cp)
-        info.addView(more, Ui.lp(Ui.dp(context, 40), Ui.dp(context, 40)))
+        val mp = Ui.lp(Ui.dp(context, 40), Ui.dp(context, 40))
+        mp.topMargin = -Ui.dp(context, 8)
+        info.addView(more, mp)
         addView(info, Ui.lp(Ui.MATCH, Ui.WRAP))
         background = Ui.ripple(context, null)
     }

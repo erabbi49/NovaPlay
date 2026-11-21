@@ -13,13 +13,14 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.media3.common.Player
 import com.novaplay.app.R
+import com.novaplay.app.data.Prefs
 import com.novaplay.app.player.Playback
 
 /** The strip above the tab bar that keeps the current video one tap away. */
 class MiniPlayerView(context: Context, private val onOpen: () -> Unit) : LinearLayout(context) {
     private val ui = Handler(Looper.getMainLooper())
     private val thumb = ImageView(context)
-    private val title = Ui.textView(context, 14f, Ui.text(context), true, 1)
+    private val title = Ui.medium(Ui.textView(context, 14f, Ui.text(context), false, 1))
     private val meta = Ui.textView(context, 12f, Ui.textDim(context), false, 1)
     private val play = Ui.iconButton(context, R.drawable.ic_play, "Play / pause", Ui.text(context), 44, 10)
     private val next = Ui.iconButton(context, R.drawable.ic_next, "Next", Ui.text(context), 44, 10)
@@ -56,6 +57,12 @@ class MiniPlayerView(context: Context, private val onOpen: () -> Unit) : LinearL
         row.setPadding(Ui.dp(context, 8), Ui.dp(context, 4), Ui.dp(context, 2), Ui.dp(context, 4))
         thumb.scaleType = ImageView.ScaleType.CENTER_CROP
         thumb.setBackgroundColor(Ui.placeholder(context))
+        thumb.outlineProvider = object : android.view.ViewOutlineProvider() {
+            override fun getOutline(v: View, outline: android.graphics.Outline) {
+                outline.setRoundRect(0, 0, v.width, v.height, Ui.dpf(v.context, 6f))
+            }
+        }
+        thumb.clipToOutline = true
         row.addView(thumb, Ui.lp(Ui.dp(context, 88), Ui.dp(context, 50)))
         val texts = LinearLayout(context)
         texts.orientation = VERTICAL
@@ -92,9 +99,9 @@ class MiniPlayerView(context: Context, private val onOpen: () -> Unit) : LinearL
         super.onDetachedFromWindow()
     }
 
-    private fun refresh() {
+    fun refresh() {
         val v = Playback.current
-        if (!Playback.hasSession || v == null) {
+        if (!Prefs.miniPlayer || !Playback.hasSession || v == null) {
             visibility = View.GONE
             return
         }

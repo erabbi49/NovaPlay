@@ -9,6 +9,7 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.GestureDetector
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.TextureView
 import android.view.View
 import android.view.ViewConfiguration
@@ -25,6 +26,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import com.novaplay.app.R
 import com.novaplay.app.data.Prefs
+import com.novaplay.app.ui.BottomSheet
 import com.novaplay.app.ui.Ui
 import com.novaplay.app.web.SiteException
 import kotlin.math.abs
@@ -161,12 +163,12 @@ class NovaPlayerView(context: Context) : FrameLayout(context) {
         }
 
         override fun onLongPress(e: MotionEvent) {
-            if (locked || !Prefs.gestures || pipMode) return
+            if (locked || !Prefs.gestures || !Prefs.holdToSpeed || pipMode) return
             if (Playback.player.isPlaying) {
                 boosting = true
                 speedBefore = Playback.speed
-                Playback.player.setPlaybackSpeed(2f)
-                showHud("2x speed")
+                Playback.player.setPlaybackSpeed(Prefs.holdSpeed)
+                showHud(formatSpeed(Prefs.holdSpeed) + " speed")
             }
         }
 
@@ -176,12 +178,20 @@ class NovaPlayerView(context: Context) : FrameLayout(context) {
                 val dx = e2.x - e1.x
                 val dy = e2.y - e1.y
                 if (abs(dx) < slop && abs(dy) < slop) return false
-                mode = if (abs(dy) > abs(dx)) (if (e1.x < width / 2f) Mode.BRIGHTNESS else Mode.VOLUME) else Mode.SEEK
+                val wanted = if (abs(dy) > abs(dx)) (if (e1.x < width / 2f) Mode.BRIGHTNESS else Mode.VOLUME) else Mode.SEEK
+                val allowed = when (wanted) {
+                    Mode.BRIGHTNESS -> Prefs.swipeBrightness
+                    Mode.VOLUME -> Prefs.swipeVolume
+                    else -> Prefs.swipeSeek
+                }
+                if (!allowed) return false
+                mode = wanted
                 beginGesture()
             }
+            val sens = Prefs.swipeSensitivity.coerceIn(50, 200) / 100f
             when (mode) {
-                Mode.BRIGHTNESS -> changeBrightness(distanceY / height)
-                Mode.VOLUME -> changeVolume(distanceY / height)
+                Mode.BRIGHTNESS -> changeBrightness(distanceY / height * sens)
+                Mode.VOLUME -> changeVolume(distanceY / height * sens)
                 Mode.SEEK -> {
                     val dur = Playback.player.duration
                     if (dur > 0) {
@@ -194,6 +204,30 @@ class NovaPlayerView(context: Context) : FrameLayout(context) {
                 Mode.NONE -> {}
             }
             return true
+        }
+    })
+
+    /** Pinch out: fill the screen (crop); pinch in: fit the whole picture. */
+    private var pinch = 1f
+    private val scaler = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScaleBegin(d: ScaleGestureDetector): Boolean {
+            pinch = 1f
+            return Prefs.pinchZoom && !locked && !pipMode
+        }
+
+        override fun onScale(d: ScaleGestureDetector): Boolean {
+            pinch *= d.scaleFactor
+            return true
+        }
+
+        override fun onScaleEnd(d: ScaleGestureDetector) {
+            if (pinch > 1.12f && resizeMode != 2) {
+                resizeMode = 2
+                showHud("Zoom to fill")
+            } else if (pinch < 0.88f && resizeMode != 0) {
+                resizeMode = 0
+                showHud("Fit to screen")
+            }
         }
     })
 
@@ -502,6 +536,11 @@ class NovaPlayerView(context: Context) : FrameLayout(context) {
         btnAmbient.alpha = if (on) 1f else 0.6f
     }
 
+    /** Colour behind the video where it does not fill the view: black, or transparent to let the ambient light through. */
+    fun setBarsColor(color: Int) {
+        setBackgroundColor(color)
+    }
+
     fun setPip(on: Boolean) {
         pipMode = on
         if (on) {
@@ -565,7 +604,9 @@ class NovaPlayerView(context: Context) : FrameLayout(context) {
     // ---------- gestures ----------
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
-        detector.onTouchEvent(e)
+        if (Prefs.pinchZoom && !locked && !pipMode) scaler.onTouchEvent(e)
+        // two fingers belong to the pinch; the single-finger gestures only see one finger
+        if (e.pointerCount == 1 && !scaler.isInProgress) detector.onTouchEvent(e)
         if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
             if (boosting) endBoost()
             if (mode == Mode.SEEK && e.actionMasked == MotionEvent.ACTION_UP && Playback.player.duration > 0) {
@@ -661,18 +702,29 @@ class NovaPlayerView(context: Context) : FrameLayout(context) {
 
     // ---------- menus ----------
 
+    /** The speeds offered in the speed menu. */
+    private fun speedSteps(): FloatArray =
+        if (Prefs.extendedSpeeds) {
+            floatArrayOf(0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f, 3.5f, 4f)
+        } else {
+            floatArrayOf(0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f)
+        }
+
     private fun showSpeedMenu() {
-        val speeds = floatArrayOf(0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f)
-        val labels = Array<CharSequence>(speeds.size) { if (speeds[it] == 1f) "Normal (1x)" else formatSpeed(speeds[it]) }
-        val checked = speeds.indexOfFirst { abs(it - Playback.speed) < 0.01f }
-        AlertDialog.Builder(context)
-            .setTitle("Playback speed")
-            .setSingleChoiceItems(labels, checked) { d, which ->
-                Playback.setSpeed(speeds[which])
+        val sheet = BottomSheet(context, "Playback speed")
+        for (sp in speedSteps()) {
+            val label = if (sp == 1f) "Normal" else formatSpeed(sp)
+            sheet.choice(label, abs(sp - Playback.speed) < 0.01f) {
+                Playback.setSpeed(sp)
                 applyState()
-                d.dismiss()
             }
-            .show()
+        }
+        sheet.show()
+    }
+
+    private fun qualityLabel(): String {
+        val opts = Playback.qualityOptions()
+        return opts.firstOrNull { it.height == Playback.forcedHeight }?.label ?: "Auto"
     }
 
     private fun showQualityMenu() {
@@ -681,67 +733,63 @@ class NovaPlayerView(context: Context) : FrameLayout(context) {
             Playback.toast("Only one quality is available")
             return
         }
-        val labels = Array<CharSequence>(opts.size) { opts[it].label }
-        val checked = opts.indexOfFirst { it.height == Playback.forcedHeight }.coerceAtLeast(0)
-        AlertDialog.Builder(context)
-            .setTitle("Quality")
-            .setSingleChoiceItems(labels, checked) { d, which ->
-                Playback.setQuality(opts[which].height)
-                d.dismiss()
-            }
-            .show()
+        val sheet = BottomSheet(context, "Quality")
+        for (o in opts) sheet.choice(o.label, o.height == Playback.forcedHeight) { Playback.setQuality(o.height) }
+        sheet.show()
+    }
+
+    private fun loopLabel(): String = when (Prefs.repeatMode) {
+        1 -> "This video"
+        2 -> "The queue"
+        else -> "Off"
     }
 
     private fun showLoopMenu() {
-        val labels = arrayOf<CharSequence>("Loop off", "Loop this video", "Loop the queue")
-        AlertDialog.Builder(context)
-            .setTitle("Loop")
-            .setSingleChoiceItems(labels, Prefs.repeatMode) { d, which ->
-                Playback.setRepeat(which)
+        val labels = listOf("Loop off", "Loop this video", "Loop the queue")
+        val sheet = BottomSheet(context, "Loop")
+        for ((i, l) in labels.withIndex()) {
+            sheet.choice(l, Prefs.repeatMode == i) {
+                Playback.setRepeat(i)
                 applyState()
-                d.dismiss()
             }
-            .show()
+        }
+        sheet.show()
     }
 
+    private fun aspectLabel(): String = when (resizeMode) {
+        1 -> "Stretch"
+        2 -> "Zoom"
+        else -> "Fit"
+    }
+
+    /** The player's settings, laid out like the gear menu of the YouTube app. */
     private fun showMoreMenu() {
-        val items = arrayOf<CharSequence>("Sleep timer", "Aspect ratio", "Lock controls")
-        AlertDialog.Builder(context)
-            .setItems(items) { _, which ->
-                when (which) {
-                    0 -> showSleepMenu()
-                    1 -> showAspectMenu()
-                    2 -> setLocked(true)
-                }
-            }
+        BottomSheet(context)
+            .add(R.drawable.ic_tune, "Quality", qualityLabel()) { showQualityMenu() }
+            .add(R.drawable.ic_speed, "Playback speed", formatSpeed(Playback.speed)) { showSpeedMenu() }
+            .add(R.drawable.ic_repeat, "Loop", loopLabel()) { showLoopMenu() }
+            .add(R.drawable.ic_ambient, "Ambient mode", if (ambientOn) "On" else "Off") { host?.onToggleAmbient() }
+            .add(R.drawable.ic_fullscreen, "Aspect ratio", aspectLabel()) { showAspectMenu() }
+            .add(R.drawable.ic_timer, "Sleep timer") { showSleepMenu() }
+            .add(R.drawable.ic_lock, "Lock controls") { setLocked(true) }
+            .add(R.drawable.ic_browser, "Open in browser") { host?.onOpenInBrowser() }
             .show()
     }
 
     private fun showSleepMenu() {
-        val labels = arrayOf<CharSequence>("Off", "15 minutes", "30 minutes", "45 minutes", "1 hour", "End of this video")
-        AlertDialog.Builder(context)
-            .setTitle("Sleep timer")
-            .setItems(labels) { _, which ->
-                when (which) {
-                    0 -> Playback.setSleepTimer(0)
-                    1 -> Playback.setSleepTimer(15)
-                    2 -> Playback.setSleepTimer(30)
-                    3 -> Playback.setSleepTimer(45)
-                    4 -> Playback.setSleepTimer(60)
-                    5 -> Playback.setSleepAtVideoEnd()
-                }
-            }
-            .show()
+        val sheet = BottomSheet(context, "Sleep timer")
+        sheet.add(R.drawable.ic_timer, "Off") { Playback.setSleepTimer(0) }
+        for (m in intArrayOf(15, 30, 45, 60)) {
+            sheet.add(R.drawable.ic_timer, if (m == 60) "1 hour" else "$m minutes") { Playback.setSleepTimer(m) }
+        }
+        sheet.add(R.drawable.ic_timer, "End of this video") { Playback.setSleepAtVideoEnd() }
+        sheet.show()
     }
 
     private fun showAspectMenu() {
-        val labels = arrayOf<CharSequence>("Fit", "Stretch", "Zoom (crop)")
-        AlertDialog.Builder(context)
-            .setTitle("Aspect ratio")
-            .setSingleChoiceItems(labels, resizeMode) { d, which ->
-                resizeMode = which
-                d.dismiss()
-            }
-            .show()
+        val labels = listOf("Fit", "Stretch", "Zoom (crop)")
+        val sheet = BottomSheet(context, "Aspect ratio")
+        for ((i, l) in labels.withIndex()) sheet.choice(l, resizeMode == i) { resizeMode = i }
+        sheet.show()
     }
 }

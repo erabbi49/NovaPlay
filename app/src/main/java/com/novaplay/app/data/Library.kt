@@ -128,6 +128,13 @@ object Library {
         persist("history") { arrayOfHistory() }
     }
 
+    /** True when [v] was watched to (nearly) the end. */
+    fun isWatched(v: Video): Boolean {
+        val total = v.durationSec * 1000L
+        if (total <= 0L) return false
+        return positionFor(v.id) >= total * 9 / 10
+    }
+
     fun positionFor(videoId: String): Long = synchronized(this) {
         val e = history.firstOrNull { it.video.id == videoId }
         if (e == null) 0L else e.positionMs

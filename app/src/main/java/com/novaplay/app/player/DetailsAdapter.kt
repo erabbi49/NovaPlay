@@ -11,6 +11,7 @@ import com.novaplay.app.data.Prefs
 import com.novaplay.app.data.Video
 import com.novaplay.app.ui.Ui
 import com.novaplay.app.ui.VideoActions
+import com.novaplay.app.ui.VideoCardView
 import com.novaplay.app.ui.VideoRowView
 
 /** The list under the player: the details header, then "Up next" and related videos. */
@@ -36,7 +37,7 @@ class DetailsAdapter(
     override fun getItemViewType(position: Int): Int = when (rows[position]) {
         is Row.Header -> TYPE_HEADER
         is Row.Section -> TYPE_SECTION
-        is Row.Item -> TYPE_ITEM
+        is Row.Item -> if (Prefs.relatedCards) TYPE_CARD else TYPE_ITEM
     }
 
     override fun getItemCount(): Int = rows.size
@@ -46,6 +47,7 @@ class DetailsAdapter(
         return when (viewType) {
             TYPE_HEADER -> Holder(FrameLayout(ctx).also { it.layoutParams = ViewGroup.LayoutParams(Ui.MATCH, Ui.WRAP) })
             TYPE_SECTION -> Holder(sectionView(ctx))
+            TYPE_CARD -> Holder(VideoCardView(ctx))
             else -> Holder(VideoRowView(ctx))
         }
     }
@@ -61,7 +63,10 @@ class DetailsAdapter(
                 }
             }
             is Row.Section -> bindSection(holder.itemView as LinearLayout, row)
-            is Row.Item -> (holder.itemView as VideoRowView).bind(row.video, actions)
+            is Row.Item -> {
+                val v = holder.itemView
+                if (v is VideoCardView) v.bind(row.video, actions) else (v as VideoRowView).bind(row.video, actions)
+            }
         }
     }
 
@@ -71,7 +76,7 @@ class DetailsAdapter(
         row.gravity = Gravity.CENTER_VERTICAL
         row.layoutParams = ViewGroup.LayoutParams(Ui.MATCH, Ui.WRAP)
         row.setPadding(Ui.dp(ctx, 14), Ui.dp(ctx, 10), Ui.dp(ctx, 14), Ui.dp(ctx, 4))
-        val title = Ui.textView(ctx, 16f, Ui.text(ctx), true, 1)
+        val title = Ui.medium(Ui.textView(ctx, 16f, Ui.text(ctx), false, 1))
         val tp = Ui.lp(0, Ui.WRAP)
         tp.weight = 1f
         row.addView(title, tp)
@@ -100,5 +105,6 @@ class DetailsAdapter(
         const val TYPE_HEADER = 0
         const val TYPE_SECTION = 1
         const val TYPE_ITEM = 2
+        const val TYPE_CARD = 3
     }
 }

@@ -69,9 +69,10 @@ class FeedScreen private constructor(
     private val chipsScroll = HorizontalScrollView(ctx)
     private val list = RecyclerView(ctx)
     private val swipe = SwipeRefreshLayout(ctx)
-    private val spinner = ProgressBar(ctx)
+    private val skeleton = SkeletonView(ctx, 4, false)
+    private var lastCompact = Prefs.compactFeed
     private val state = StateBox(ctx)
-    private lateinit var topBar: TopBar
+    private var barTitle: TextView? = null // the title of the bar (or the search field) so it can be filled in later
     private var subButton: ImageButton? = null
     private val adapter = FeedAdapter()
 
@@ -116,10 +117,8 @@ class FeedScreen private constructor(
         swipe.setProgressBackgroundColorSchemeColor(Ui.surfaceVariant(ctx))
         swipe.setOnRefreshListener { reload() }
         body.addView(swipe, Ui.frame(Ui.MATCH, Ui.MATCH))
-        val sp = Ui.frame(Ui.dp(ctx, 40), Ui.dp(ctx, 40))
-        sp.gravity = Gravity.CENTER
-        spinner.visibility = View.GONE
-        body.addView(spinner, sp)
+        skeleton.visibility = View.GONE
+        body.addView(skeleton, Ui.frame(Ui.MATCH, Ui.MATCH))
         body.addView(state, Ui.frame(Ui.MATCH, Ui.MATCH))
         root.addView(body, Ui.lp(Ui.MATCH, 0).also { it.weight = 1f })
         if (isHome) buildChips()
@@ -133,20 +132,22 @@ class FeedScreen private constructor(
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.setPadding(Ui.dp(ctx, 14), 0, Ui.dp(ctx, 4), 0)
         bar.minimumHeight = Ui.dp(ctx, 56)
+        // a wide rounded badge with a play triangle, then the name set tight and bold, like the YouTube app bar
         val logo = FrameLayout(ctx)
-        logo.background = Ui.rounded(Ui.accent(ctx), Ui.dpf(ctx, 8f))
+        logo.background = Ui.rounded(Ui.accent(ctx), Ui.dpf(ctx, 6f))
         val play = ImageView(ctx)
         play.setImageResource(R.drawable.ic_play)
         play.setColorFilter(Color.WHITE)
-        val pad = Ui.dp(ctx, 4)
+        val pad = Ui.dp(ctx, 3)
         play.setPadding(pad, pad, pad, pad)
         logo.addView(play, Ui.frame(Ui.MATCH, Ui.MATCH))
-        bar.addView(logo, Ui.lp(Ui.dp(ctx, 30), Ui.dp(ctx, 30)))
+        bar.addView(logo, Ui.lp(Ui.dp(ctx, 29), Ui.dp(ctx, 21)))
         val name = Ui.textView(ctx, 20f, Ui.text(ctx), true, 1)
         name.text = "NovaPlay"
+        name.letterSpacing = -0.04f
         val np = Ui.lp(0, Ui.WRAP)
         np.weight = 1f
-        np.leftMargin = Ui.dp(ctx, 10)
+        np.leftMargin = Ui.dp(ctx, 6)
         bar.addView(name, np)
         for ((icon, desc, act) in listOf(
             Triple(R.drawable.ic_search, "Search", { activity.openSearch() }),
@@ -169,12 +170,40 @@ class FeedScreen private constructor(
             .show()
     }
 
+    /** Search results get the search field with the query in it, as in the YouTube app; tapping it edits the query. */
+    private fun searchBar(): View {
+        val bar = LinearLayout(ctx)
+        bar.orientation = LinearLayout.HORIZONTAL
+        bar.gravity = Gravity.CENTER_VERTICAL
+        bar.setPadding(Ui.dp(ctx, 4), Ui.dp(ctx, 8), Ui.dp(ctx, 4), Ui.dp(ctx, 8))
+        val back = Ui.iconButton(ctx, R.drawable.ic_back, "Back", Ui.text(ctx))
+        back.setOnClickListener { activity.pop() }
+        bar.addView(back)
+        val field = LinearLayout(ctx)
+        field.orientation = LinearLayout.HORIZONTAL
+        field.gravity = Gravity.CENTER_VERTICAL
+        field.background = Ui.rounded(Ui.surfaceVariant(ctx), Ui.dpf(ctx, 20f))
+        field.setPadding(Ui.dp(ctx, 16), 0, Ui.dp(ctx, 16), 0)
+        val query = Ui.textView(ctx, 16f, Ui.text(ctx), false, 1)
+        query.text = screenTitle
+        barTitle = query
+        field.addView(query, Ui.lp(Ui.MATCH, Ui.dp(ctx, 40)).also { it.gravity = Gravity.CENTER_VERTICAL })
+        query.gravity = Gravity.CENTER_VERTICAL
+        field.setOnClickListener { activity.replaceTop(SearchScreen(activity, screenTitle)) }
+        bar.addView(field, Ui.lp(0, Ui.WRAP).also { it.weight = 1f })
+        val more = Ui.iconButton(ctx, R.drawable.ic_more, "More", Ui.text(ctx))
+        more.setOnClickListener { showListingMenu(true) }
+        bar.addView(more)
+        return bar
+    }
+
     private fun listingBar(): View {
+        val isSearch = Site.pathOf(startUrl).startsWith("/search/")
+        if (isSearch) return searchBar()
         val bar = TopBar(ctx)
-        topBar = bar
+        barTitle = bar.title
         bar.title.text = screenTitle
         bar.showBack { activity.pop() }
-        val isSearch = Site.pathOf(startUrl).startsWith("/search/")
         if (!isSearch) {
             subButton = bar.action(R.drawable.ic_subs, "Subscribe") { toggleSubscription() }
             updateSubButton()
@@ -294,7 +323,7 @@ class FeedScreen private constructor(
             footer = Footer.LOADING
         } else {
             footer = Footer.NONE
-            if (items.isEmpty()) spinner.visibility = View.VISIBLE else swipe.isRefreshing = true
+            if (items.isEmpty()) skeleton.visibility = View.VISIBLE else swipe.isRefreshing = true
         }
         adapter.notifyDataSetChanged()
         job = activity.lifecycleScope.launch {
@@ -302,6 +331,8 @@ class FeedScreen private constructor(
                 val page = SiteClient.listing(url, n > 1)
                 if (gen != generation) return@launch
                 val fresh = if (append) page.videos.filter { it.id !in seen } else page.videos
+                // "hide watched videos": a page that would be left empty by it is shown as it is
+                val shown = if (Prefs.hideWatched) fresh.filter { !Library.isWatched(it) }.ifEmpty { fresh } else fresh
                 if (fresh.isEmpty()) {
                     // nothing new here: the list ends before this page
                     more = false
@@ -316,14 +347,14 @@ class FeedScreen private constructor(
                         items.clear()
                         seen.clear()
                     }
-                    for (v in fresh) if (seen.add(v.id)) items.add(v)
+                    for (v in shown) if (seen.add(v.id)) items.add(v)
                     pageNo = n
                     absorb(page, url)
                     if (!append) list.scrollToPosition(0)
                 }
                 if (!isHome && screenTitle.isEmpty() && page.title.isNotEmpty()) {
                     screenTitle = page.title.substringBefore(" - ").substringBefore(" | ").trim().take(60)
-                    topBar.title.text = screenTitle
+                    barTitle?.text = screenTitle
                 }
                 footer = Footer.NONE
             } catch (e: CancellationException) {
@@ -335,7 +366,7 @@ class FeedScreen private constructor(
             } finally {
                 if (gen == generation) {
                     loading = false
-                    spinner.visibility = View.GONE
+                    skeleton.visibility = View.GONE
                     swipe.isRefreshing = false
                     adapter.notifyDataSetChanged()
                 }
@@ -408,8 +439,9 @@ class FeedScreen private constructor(
             loadPage(1, false)
             return
         }
-        if (lastPaged != Prefs.pagedFeed) {
+        if (lastPaged != Prefs.pagedFeed || lastCompact != Prefs.compactFeed) {
             lastPaged = Prefs.pagedFeed
+            lastCompact = Prefs.compactFeed
             adapter.notifyDataSetChanged()
         }
         if (retryAfterBrowser) reload()
@@ -430,20 +462,24 @@ class FeedScreen private constructor(
         override fun getItemCount(): Int = items.size + if (hasFooter()) 1 else 0
 
         override fun getItemViewType(position: Int): Int = when {
-            position < items.size -> 0
+            position < items.size -> if (Prefs.compactFeed) 3 else 0
             Prefs.pagedFeed -> 2
             else -> 1
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder = when (viewType) {
             0 -> Holder(VideoCardView(parent.context))
+            3 -> Holder(VideoRowView(parent.context))
             2 -> Holder(PagerView(parent.context))
             else -> Holder(footerView())
         }
 
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             when {
-                position < items.size -> (holder.itemView as VideoCardView).bind(items[position], actions)
+                position < items.size -> {
+                    val v = holder.itemView
+                    if (v is VideoCardView) v.bind(items[position], actions) else (v as VideoRowView).bind(items[position], actions)
+                }
                 Prefs.pagedFeed -> (holder.itemView as PagerView).bind(pageNo, pageMax, more, loading) { n -> loadPage(n, false) }
                 else -> bindFooter(holder.itemView as LinearLayout)
             }

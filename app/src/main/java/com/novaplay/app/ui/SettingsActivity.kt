@@ -15,6 +15,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
 import com.novaplay.app.CrashLog
 import com.novaplay.app.NovaApp
+import com.novaplay.app.R
 import com.novaplay.app.data.Library
 import com.novaplay.app.data.Prefs
 import com.novaplay.app.web.Site
@@ -22,16 +23,20 @@ import com.novaplay.app.web.SiteClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
-/** Every setting of the app on one page. */
+/**
+ * The settings, split into pages like the YouTube app: a list of categories, and one page for each. The page to show
+ * is passed as [EXTRA_PAGE]; without it the list of categories is shown.
+ */
 class SettingsActivity : BaseActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val page = intent.getStringExtra(EXTRA_PAGE).orEmpty()
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
         root.setBackgroundColor(Ui.bg(this))
         val bar = TopBar(this)
-        bar.title.text = "Settings"
+        bar.title.text = titleOf(page)
         bar.showBack { finish() }
         root.addView(bar, Ui.lp(Ui.MATCH, Ui.WRAP))
 
@@ -41,11 +46,58 @@ class SettingsActivity : BaseActivity() {
         scroll.addView(content, Ui.lp(Ui.MATCH, Ui.WRAP))
         root.addView(scroll, Ui.lp(Ui.MATCH, 0).also { it.weight = 1f })
         setContentView(root)
-        build(Form(this, content))
+        content.addView(Ui.spacer(this, 0, 4))
+        val f = Form(this, content)
+        when (page) {
+            PAGE_APPEARANCE -> appearance(f)
+            PAGE_PLAYBACK -> playback(f)
+            PAGE_GESTURES -> gestures(f)
+            PAGE_AMBIENT -> ambient(f)
+            PAGE_DOWNLOADS -> downloads(f)
+            PAGE_PRIVACY -> privacy(f)
+            PAGE_SITE -> site(f)
+            PAGE_ABOUT -> about(f)
+            else -> home(f)
+        }
+        content.addView(Ui.spacer(this, 0, 24))
     }
 
-    private fun build(f: Form) {
-        f.section("Appearance")
+    private fun titleOf(page: String): String = when (page) {
+        PAGE_APPEARANCE -> "Appearance & layout"
+        PAGE_PLAYBACK -> "Playback"
+        PAGE_GESTURES -> "Gestures"
+        PAGE_AMBIENT -> "Ambient mode"
+        PAGE_DOWNLOADS -> "Downloads"
+        PAGE_PRIVACY -> "History & privacy"
+        PAGE_SITE -> "Site"
+        PAGE_ABOUT -> "About"
+        else -> "Settings"
+    }
+
+    private fun open(page: String) {
+        startActivity(Intent(this, SettingsActivity::class.java).putExtra(EXTRA_PAGE, page))
+    }
+
+    // ---------- the list of categories ----------
+
+    private fun home(f: Form) {
+        f.nav(R.drawable.ic_tune, "Appearance & layout", "Theme, list layout, mini player, thumbnails") { open(PAGE_APPEARANCE) }
+        f.nav(R.drawable.ic_play, "Playback", "Autoplay, speed, quality, background play") { open(PAGE_PLAYBACK) }
+        f.nav(R.drawable.ic_forward, "Gestures", "Swipes, double-tap, hold to speed up, pinch to zoom") { open(PAGE_GESTURES) }
+        f.nav(R.drawable.ic_ambient, "Ambient mode", "Light that follows the colours of the video") { open(PAGE_AMBIENT) }
+        f.nav(R.drawable.ic_download, "Downloads", "Quality and Wi-Fi") { open(PAGE_DOWNLOADS) }
+        f.nav(R.drawable.ic_shield, "Ad blocker", "Filter lists, switches and your own rules") {
+            startActivity(Intent(this, AdBlockActivity::class.java))
+        }
+        f.nav(R.drawable.ic_history, "History & privacy", "Watch history and searches") { open(PAGE_PRIVACY) }
+        f.nav(R.drawable.ic_browser, "Site", "Address of the site and the in-app browser") { open(PAGE_SITE) }
+        f.nav(R.drawable.ic_info, "About", "Version, crash report, diagnostics") { open(PAGE_ABOUT) }
+    }
+
+    // ---------- pages ----------
+
+    private fun appearance(f: Form) {
+        f.section("Theme")
         f.choice(
             "Theme",
             listOf(
@@ -69,21 +121,44 @@ class SettingsActivity : BaseActivity() {
             { Prefs.pagedFeed },
             { Prefs.pagedFeed = it }
         )
+        f.toggle(
+            "Compact list",
+            "Small thumbnails on the left instead of big cards on Home, search and channels",
+            { Prefs.compactFeed },
+            { Prefs.compactFeed = it }
+        )
+        f.toggle("Hide watched videos", "Leave out videos you already watched to the end", { Prefs.hideWatched }, { Prefs.hideWatched = it })
+        f.toggle(
+            "Thumbnail labels",
+            "Show the length and quality on thumbnails",
+            { Prefs.thumbBadges },
+            { Prefs.thumbBadges = it }
+        )
 
-        f.section("Playback")
+        f.section("Watch page")
+        f.toggle(
+            "Related videos as cards",
+            "Big cards under the player, like the YouTube app. Off for small rows",
+            { Prefs.relatedCards },
+            { Prefs.relatedCards = it }
+        )
+        f.toggle(
+            "Mini player",
+            "Keep the current video one tap away above the tab bar",
+            { Prefs.miniPlayer },
+            { Prefs.miniPlayer = it }
+        )
+    }
+
+    private fun playback(f: Form) {
+        f.section("Playing")
         f.toggle("Autoplay next", "Keep playing the queue, then related videos", { Prefs.autoplayNext }, { Prefs.autoplayNext = it })
         f.toggle("Resume where you stopped", "Continue a video from its last position", { Prefs.resumePlayback }, { Prefs.resumePlayback = it })
         f.toggle("Background play", "Keep the sound going when you leave the app or lock the screen", { Prefs.backgroundPlay }, { Prefs.backgroundPlay = it })
         f.toggle("Picture-in-picture", "Shrink the video into a small window when you leave the app", { Prefs.pipOnLeave }, { Prefs.pipOnLeave = it })
-        f.toggle("Ambient mode", "A soft glow around the player that follows the colours of the video", { Prefs.ambient }, { Prefs.ambient = it })
-        f.toggle("Gestures", "Swipe the sides for brightness and volume, double-tap to skip", { Prefs.gestures }, { Prefs.gestures = it })
         f.toggle("Fullscreen on rotate", "Turn the phone sideways to watch fullscreen", { Prefs.autoLandscapeFullscreen }, { Prefs.autoLandscapeFullscreen = it })
-        f.choice(
-            "Skip time",
-            listOf("5 seconds" to 5, "10 seconds" to 10, "15 seconds" to 15, "30 seconds" to 30),
-            { Prefs.doubleTapSeekSec },
-            { Prefs.doubleTapSeekSec = it }
-        )
+
+        f.section("Speed")
         f.choice(
             "Default speed",
             listOf(
@@ -94,13 +169,87 @@ class SettingsActivity : BaseActivity() {
             { Prefs.defaultSpeed = it }
         )
         f.toggle("Remember speed", "Use the last speed you picked for the next video", { Prefs.rememberSpeed }, { Prefs.rememberSpeed = it })
+        f.toggle("Speeds up to 4x", "Add 3.5x and 4x to the speed menu", { Prefs.extendedSpeeds }, { Prefs.extendedSpeeds = it })
+
+        f.section("Video quality")
         f.choice(
-            "Streaming quality",
+            "On Wi-Fi",
             listOf("Auto" to 0, "1080p" to 1080, "720p" to 720, "480p" to 480, "360p" to 360, "240p" to 240),
             { Prefs.streamQuality },
             { Prefs.streamQuality = it }
         )
+        f.choice(
+            "On mobile data",
+            listOf("Same as Wi-Fi" to -1, "Auto" to 0, "720p" to 720, "480p" to 480, "360p" to 360, "240p" to 240),
+            { Prefs.streamQualityMobile },
+            { Prefs.streamQualityMobile = it }
+        )
+        f.note("The highest quality the player may pick. You can still change it for one video in the player's settings.")
+    }
 
+    private fun gestures(f: Form) {
+        f.section("Player gestures")
+        f.toggle("Gestures", "Turn all swipes and holds on or off", { Prefs.gestures }, { Prefs.gestures = it })
+        f.toggle("Swipe for brightness", "Slide up or down on the left half", { Prefs.swipeBrightness }, { Prefs.swipeBrightness = it })
+        f.toggle("Swipe for volume", "Slide up or down on the right half", { Prefs.swipeVolume }, { Prefs.swipeVolume = it })
+        f.toggle("Swipe to seek", "Slide left or right across the video", { Prefs.swipeSeek }, { Prefs.swipeSeek = it })
+        f.choice(
+            "Swipe sensitivity",
+            listOf("Low (50%)" to 50, "75%" to 75, "Normal (100%)" to 100, "150%" to 150, "High (200%)" to 200),
+            { Prefs.swipeSensitivity },
+            { Prefs.swipeSensitivity = it }
+        )
+        f.choice(
+            "Double-tap skip",
+            listOf("5 seconds" to 5, "10 seconds" to 10, "15 seconds" to 15, "30 seconds" to 30),
+            { Prefs.doubleTapSeekSec },
+            { Prefs.doubleTapSeekSec = it }
+        )
+
+        f.section("Hold and pinch")
+        f.toggle("Hold to speed up", "Keep a finger on the video to play faster", { Prefs.holdToSpeed }, { Prefs.holdToSpeed = it })
+        f.choice(
+            "Hold speed",
+            listOf("1.5x" to 1.5f, "2x" to 2f, "3x" to 3f, "4x" to 4f),
+            { Prefs.holdSpeed },
+            { Prefs.holdSpeed = it }
+        )
+        f.toggle("Pinch to zoom", "Pinch out to fill the screen, pinch in to fit the whole picture", { Prefs.pinchZoom }, { Prefs.pinchZoom = it })
+    }
+
+    private fun ambient(f: Form) {
+        f.section("Ambient mode")
+        f.toggle("Ambient mode", "Light the page and the black bars with the colours of the video", { Prefs.ambient }, { Prefs.ambient = it })
+        f.choice(
+            "Strength",
+            listOf("Subtle" to 30, "Soft" to 50, "Normal" to 75, "Strong" to 100),
+            { Prefs.ambientStrength },
+            { Prefs.ambientStrength = it }
+        )
+        f.choice(
+            "Blur",
+            listOf("Sharp (keeps the shapes)" to 0, "Light" to 1, "Medium" to 2, "Strong" to 3),
+            { Prefs.ambientBlur },
+            { Prefs.ambientBlur = it }
+        )
+        f.choice(
+            "Smoothing",
+            listOf("Off (follows every change)" to 0, "Low" to 1, "Medium" to 2, "High (very slow glide)" to 3),
+            { Prefs.ambientSmooth },
+            { Prefs.ambientSmooth = it }
+        )
+        f.toggle("Dim while scrolling", "Make the light softer while you scroll the page", { Prefs.ambientDimScroll }, { Prefs.ambientDimScroll = it })
+        f.choice(
+            "Dim time",
+            listOf("1 second" to 1000, "1.5 seconds" to 1500, "3 seconds" to 3000, "5 seconds" to 5000),
+            { Prefs.ambientDimMs },
+            { Prefs.ambientDimMs = it }
+        )
+        f.toggle("Keep text readable", "Darken the light under the player so titles and descriptions stay clear", { Prefs.ambientReadable }, { Prefs.ambientReadable = it })
+        f.toggle("Light the black bars", "Fill the bars around the video (fullscreen, and videos that are not 16:9) with the light", { Prefs.ambientBars }, { Prefs.ambientBars = it })
+    }
+
+    private fun downloads(f: Form) {
         f.section("Downloads")
         f.choice(
             "Download quality",
@@ -112,13 +261,10 @@ class SettingsActivity : BaseActivity() {
             { Prefs.downloadQuality = it }
         )
         f.toggle("Wi-Fi only", "Wait for Wi-Fi instead of using mobile data", { Prefs.wifiOnlyDownloads }, { Prefs.wifiOnlyDownloads = it })
+    }
 
-        f.section("Ad blocker")
-        f.action("Ad blocker", "Filter lists, switches and your own rules") {
-            startActivity(Intent(this, AdBlockActivity::class.java))
-        }
-
-        f.section("Privacy")
+    private fun privacy(f: Form) {
+        f.section("Watch history")
         f.toggle("Keep watch history", null, { Prefs.keepHistory }, { Prefs.keepHistory = it })
         f.action("Clear watch history", null) {
             Dialogs.confirm(this, "Clear watch history?", "This also forgets where you stopped in each video.", "Clear") {
@@ -126,11 +272,14 @@ class SettingsActivity : BaseActivity() {
                 Dialogs.toast(this, "Watch history cleared")
             }
         }
+        f.section("Searches")
         f.action("Clear search history", null) {
             Library.clearSearches()
             Dialogs.toast(this, "Search history cleared")
         }
+    }
 
+    private fun site(f: Form) {
         f.section("Site")
         val address = f.action("Site address", Prefs.baseUrl) { editAddress() }
         addressView = address
@@ -140,9 +289,11 @@ class SettingsActivity : BaseActivity() {
                 "NovaPlay then reuses the result."
         )
         f.action("Open site in browser", "Solve a human check or sign in once") { BrowserActivity.open(this, Site.home()) }
+    }
 
+    private fun about(f: Form) {
         f.section("About")
-        f.note("NovaPlay 1.1. Videos are loaded from the site you choose above; NovaPlay itself hosts nothing.")
+        f.note("NovaPlay 1.2. Videos are loaded from the site you choose in Settings \u203a Site; NovaPlay itself hosts nothing.")
         f.action("Last crash report", "If the app closed by itself, copy this report and send it on") { showCrash() }
         f.action("Diagnostics", "Check how the site's pages are read; copy the result if something looks wrong") { runDiagnostics() }
     }
@@ -207,7 +358,7 @@ class SettingsActivity : BaseActivity() {
         } catch (e: Exception) {
             null
         }
-        return "NovaPlay 1.1 | ${Build.MANUFACTURER} ${Build.MODEL} | Android ${Build.VERSION.RELEASE} | WebView ${webview ?: "?"}\n" +
+        return "NovaPlay 1.2 | ${Build.MANUFACTURER} ${Build.MODEL} | Android ${Build.VERSION.RELEASE} | WebView ${webview ?: "?"}\n" +
             "site: ${Site.base} | page numbers: ${Prefs.pagedFeed}\n\n"
     }
 
@@ -234,5 +385,17 @@ class SettingsActivity : BaseActivity() {
         val host = Site.hostOf(t)
         if (host.isEmpty() || !host.contains('.') || host.contains(' ')) return null
         return t.substringBefore("://") + "://" + host
+    }
+
+    companion object {
+        const val EXTRA_PAGE = "settings_page"
+        const val PAGE_APPEARANCE = "appearance"
+        const val PAGE_PLAYBACK = "playback"
+        const val PAGE_GESTURES = "gestures"
+        const val PAGE_AMBIENT = "ambient"
+        const val PAGE_DOWNLOADS = "downloads"
+        const val PAGE_PRIVACY = "privacy"
+        const val PAGE_SITE = "site"
+        const val PAGE_ABOUT = "about"
     }
 }

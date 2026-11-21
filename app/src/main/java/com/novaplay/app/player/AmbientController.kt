@@ -2,41 +2,60 @@ package com.novaplay.app.player
 
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.graphics.drawable.GradientDrawable
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.TextureView
-import android.view.View
-import com.novaplay.app.ui.Ui
+import androidx.media3.common.Player
+import com.novaplay.app.data.Prefs
 
 /**
- * "Ambient mode": a soft glow behind and below the player that follows the colours of the picture.
- * It reads a tiny 16x9 copy of the current frame a few times a second and eases a gradient towards it.
+ * "Enhanced ambient mode". About ten times a second it copies a tiny version of the current video frame,
+ * eases the colours towards it (so the light glides instead of flickering) and hands the result to
+ * [AmbientGlowView], which lights the page and the black bars with it.
  */
-class AmbientController(private val surface: TextureView, private val glow: View) {
+class AmbientController(private val surface: TextureView, private val glow: AmbientGlowView) {
     private val ui = Handler(Looper.getMainLooper())
-    private val bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
-    private val px = IntArray(W * H)
-    private val gradient = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0, 0, 0))
-    private var top = 0
-    private var bottom = 0
-    private var primed = false
+    private var bmp: Bitmap? = null
+    private var raw = IntArray(0)
+    private var out = IntArray(0)
+    private var cur = FloatArray(0)
+    private var w = 0
+    private var h = 0
     private var running = false
+    private var interval = FAST_MS
+    private var lastSample = 0L
+
+    /** True once a picture of the current video has been handed to the glow. */
+    var hasFrame = false
+        private set
+
+    /** Called (on the main thread) when the first picture of a video arrives. */
+    var onFirstFrame: (() -> Unit)? = null
 
     private val tick = object : Runnable {
         override fun run() {
             if (!running) return
-            if (surface.isAvailable && Playback.player.isPlaying && glow.isShown) sample()
-            ui.postDelayed(this, 250)
+            val t0 = SystemClock.uptimeMillis()
+            if (surface.isAvailable && glow.isShown) {
+                val p = Playback.player
+                if (p.isPlaying) {
+                    sample()
+                } else if (p.playbackState == Player.STATE_READY && (!hasFrame || t0 - lastSample > IDLE_MS)) {
+                    // paused: the picture only changes when the person seeks, so look now and then
+                    sample()
+                }
+            }
+            // a slow phone gets a slower light instead of a slower app
+            interval = if (SystemClock.uptimeMillis() - t0 > SLOW_COST_MS) SLOW_MS else FAST_MS
+            ui.postDelayed(this, interval)
         }
     }
 
     fun start() {
         if (running) return
         running = true
-        if (!primed) reset()
-        glow.background = gradient
-        paint()
+        configure()
         ui.post(tick)
     }
 
@@ -45,65 +64,73 @@ class AmbientController(private val surface: TextureView, private val glow: View
         ui.removeCallbacks(tick)
     }
 
-    /** Fades the glow out (used when the feature is switched off). */
-    fun reset() {
-        val bg = Ui.bg(glow.context)
-        top = bg
-        bottom = bg
-        primed = true
-        paint()
+    /** Forgets the picture (a new video started, or the feature was switched off). */
+    fun clear() {
+        hasFrame = false
+        glow.clearFrame()
     }
 
-    /** Re-applies the colours, e.g. after the app theme changed. */
-    fun refresh() = paint()
+    /** Re-reads the settings (picture size, blur, strength). */
+    fun configure() {
+        val (nw, nh) = when (Prefs.ambientBlur.coerceIn(0, 3)) {
+            0 -> 64 to 36
+            1 -> 32 to 18
+            2 -> 16 to 9
+            else -> 8 to 5
+        }
+        if (nw != w || bmp == null) {
+            w = nw
+            h = nh
+            bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            raw = IntArray(w * h)
+            out = IntArray(w * h)
+            cur = FloatArray(w * h * 3)
+            hasFrame = false
+        }
+        glow.configure()
+    }
 
     private fun sample() {
+        val b = bmp ?: return
+        lastSample = SystemClock.uptimeMillis()
         try {
-            surface.getBitmap(bmp)
+            surface.getBitmap(b)
         } catch (e: Exception) {
             return
         }
-        bmp.getPixels(px, 0, W, 0, 0, W, H)
-        val upper = average(0, 4)
-        val lower = average(5, H)
-        top = mix(top, upper, 0.4f)
-        bottom = mix(bottom, lower, 0.4f)
-        paint()
-    }
-
-    private fun average(fromRow: Int, toRow: Int): Int {
-        var r = 0L
-        var g = 0L
-        var b = 0L
-        var n = 0
-        for (y in fromRow until toRow) {
-            for (x in 0 until W) {
-                val c = px[y * W + x]
-                r += Color.red(c)
-                g += Color.green(c)
-                b += Color.blue(c)
-                n++
-            }
+        b.getPixels(raw, 0, w, 0, 0, w, h)
+        val k = when (Prefs.ambientSmooth.coerceIn(0, 3)) {
+            0 -> 1f
+            1 -> 0.55f
+            2 -> 0.28f
+            else -> 0.13f
         }
-        if (n == 0) return Color.BLACK
-        return Color.rgb((r / n).toInt(), (g / n).toInt(), (b / n).toInt())
-    }
-
-    private fun paint() {
-        val bg = Ui.bg(glow.context)
-        gradient.colors = intArrayOf(mix(bg, top, 0.75f), mix(bg, bottom, 0.5f), bg)
-        glow.invalidate()
-    }
-
-    private fun mix(a: Int, b: Int, t: Float): Int {
-        val r = Color.red(a) + (Color.red(b) - Color.red(a)) * t
-        val g = Color.green(a) + (Color.green(b) - Color.green(a)) * t
-        val bl = Color.blue(a) + (Color.blue(b) - Color.blue(a)) * t
-        return Color.rgb(r.toInt(), g.toInt(), bl.toInt())
+        val first = !hasFrame
+        for (i in 0 until w * h) {
+            val c = raw[i]
+            val j = i * 3
+            if (first) {
+                cur[j] = Color.red(c).toFloat()
+                cur[j + 1] = Color.green(c).toFloat()
+                cur[j + 2] = Color.blue(c).toFloat()
+            } else {
+                cur[j] += (Color.red(c) - cur[j]) * k
+                cur[j + 1] += (Color.green(c) - cur[j + 1]) * k
+                cur[j + 2] += (Color.blue(c) - cur[j + 2]) * k
+            }
+            out[i] = Color.rgb(cur[j].toInt(), cur[j + 1].toInt(), cur[j + 2].toInt())
+        }
+        glow.setPixels(w, h, out)
+        if (first) {
+            hasFrame = true
+            onFirstFrame?.invoke()
+        }
     }
 
     private companion object {
-        const val W = 16
-        const val H = 9
+        const val FAST_MS = 100L
+        const val SLOW_MS = 200L
+        const val SLOW_COST_MS = 14L
+        const val IDLE_MS = 600L
     }
 }

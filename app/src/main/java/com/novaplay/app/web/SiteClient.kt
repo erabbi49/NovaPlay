@@ -36,18 +36,43 @@ object SiteClient {
         resolver = HiddenWeb(appContext, false)
     }
 
-    /** Reads one listing page (home, newest, search results, a channel or category). */
-    suspend fun listing(url: String): SitePage {
+    /**
+     * Reads one listing page (home, newest, search results, a channel or category).
+     * [later] marks the pages after the first: they may not exist, so they are not waited for as long
+     * and an empty answer is not retried.
+     */
+    suspend fun listing(url: String, later: Boolean = false): SitePage {
         val target = Site.rebase(url)
+        val wait = if (later) SiteScraper.listWaitMs.coerceAtMost(10_000L) else SiteScraper.listWaitMs
         try {
-            return lister.use { SiteScraper.listing(it, target, scripts) }
+            return lister.use { SiteScraper.listing(it, target, scripts, wait) }
         } catch (e: SiteException) {
-            if (e.kind != SiteException.Kind.NETWORK && e.kind != SiteException.Kind.EMPTY) throw e
+            val retry = e.kind == SiteException.Kind.NETWORK || (e.kind == SiteException.Kind.EMPTY && !later)
+            if (!retry) throw e
         }
-        return lister.use { SiteScraper.listing(it, target, scripts) } // one retry for flaky loads
+        return lister.use { SiteScraper.listing(it, target, scripts, wait) } // one retry for flaky loads
     }
 
     suspend fun search(query: String): SitePage = listing(Site.search(query))
+
+    /**
+     * Reads [urls] one after the other, then one video page from the first list that had one, and returns a
+     * text report of how each page was understood.
+     */
+    suspend fun diagnose(urls: List<String>): String {
+        val sb = StringBuilder()
+        var firstVideo: String? = null
+        for (u in urls) {
+            val r = lister.use { SiteScraper.diagnose(it, Site.rebase(u), scripts) }
+            sb.append(r.text).append('\n')
+            if (firstVideo == null) firstVideo = r.firstVideo
+        }
+        val video = firstVideo
+        if (video != null) {
+            sb.append(resolver.use { SiteScraper.diagnoseVideo(it, Site.rebase(video), scripts) }).append('\n')
+        }
+        return sb.toString()
+    }
 
     /** Finds the playable stream and details of a video page. Cached for a while, since URLs are signed. */
     suspend fun resolve(pageUrl: String, force: Boolean = false): StreamInfo {

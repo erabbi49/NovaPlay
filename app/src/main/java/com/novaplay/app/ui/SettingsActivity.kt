@@ -5,16 +5,22 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Typeface
+import android.os.Build
 import android.os.Bundle
+import android.webkit.WebView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
+import androidx.lifecycle.lifecycleScope
 import com.novaplay.app.CrashLog
 import com.novaplay.app.NovaApp
 import com.novaplay.app.data.Library
 import com.novaplay.app.data.Prefs
 import com.novaplay.app.web.Site
+import com.novaplay.app.web.SiteClient
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 /** Every setting of the app on one page. */
 class SettingsActivity : BaseActivity() {
@@ -54,6 +60,14 @@ class SettingsActivity : BaseActivity() {
                 NovaApp.applyTheme()
                 recreate()
             }
+        )
+
+        f.section("Lists")
+        f.toggle(
+            "Page numbers",
+            "Show 1 2 3 \u2026 under the lists. Turn off for endless scrolling",
+            { Prefs.pagedFeed },
+            { Prefs.pagedFeed = it }
         )
 
         f.section("Playback")
@@ -128,8 +142,9 @@ class SettingsActivity : BaseActivity() {
         f.action("Open site in browser", "Solve a human check or sign in once") { BrowserActivity.open(this, Site.home()) }
 
         f.section("About")
-        f.note("NovaPlay 1.0. Videos are loaded from the site you choose above; NovaPlay itself hosts nothing.")
+        f.note("NovaPlay 1.1. Videos are loaded from the site you choose above; NovaPlay itself hosts nothing.")
         f.action("Last crash report", "If the app closed by itself, copy this report and send it on") { showCrash() }
+        f.action("Diagnostics", "Check how the site's pages are read; copy the result if something looks wrong") { runDiagnostics() }
     }
 
     private fun showCrash() {
@@ -138,6 +153,11 @@ class SettingsActivity : BaseActivity() {
             Dialogs.toast(this, "No crash has been saved")
             return
         }
+        showText("Last crash report", report) { CrashLog.clear() }
+    }
+
+    /** A selectable monospace report with a Copy button. [onClear] adds a Clear button. */
+    private fun showText(title: String, report: String, onClear: (() -> Unit)? = null) {
         val text = TextView(this)
         text.text = report
         text.typeface = Typeface.MONOSPACE
@@ -148,17 +168,47 @@ class SettingsActivity : BaseActivity() {
         text.setPadding(pad, pad, pad, pad)
         val scroll = ScrollView(this)
         scroll.addView(text)
-        AlertDialog.Builder(this)
-            .setTitle("Last crash report")
+        val b = AlertDialog.Builder(this)
+            .setTitle(title)
             .setView(scroll)
             .setPositiveButton("Copy") { _, _ ->
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                clipboard.setPrimaryClip(ClipData.newPlainText("NovaPlay crash report", report))
+                clipboard.setPrimaryClip(ClipData.newPlainText("NovaPlay report", report))
                 Dialogs.toast(this, "Copied")
             }
-            .setNeutralButton("Clear") { _, _ -> CrashLog.clear() }
             .setNegativeButton("Close", null)
-            .show()
+        if (onClear != null) b.setNeutralButton("Clear") { _, _ -> onClear() }
+        b.show()
+    }
+
+    private fun runDiagnostics() {
+        val busy = AlertDialog.Builder(this)
+            .setTitle("Diagnostics")
+            .setMessage("Reading the site. This can take a minute or two.")
+            .setCancelable(false)
+            .create()
+        busy.show()
+        lifecycleScope.launch {
+            val report = try {
+                SiteClient.diagnose(listOf(Site.home(), Site.newest(), Site.search("test")))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                "Diagnostics failed: ${e.message}\n"
+            }
+            busy.dismiss()
+            showText("Diagnostics", deviceLine() + report)
+        }
+    }
+
+    private fun deviceLine(): String {
+        val webview = try {
+            if (Build.VERSION.SDK_INT >= 26) WebView.getCurrentWebViewPackage()?.let { it.packageName + " " + it.versionName } else null
+        } catch (e: Exception) {
+            null
+        }
+        return "NovaPlay 1.1 | ${Build.MANUFACTURER} ${Build.MODEL} | Android ${Build.VERSION.RELEASE} | WebView ${webview ?: "?"}\n" +
+            "site: ${Site.base} | page numbers: ${Prefs.pagedFeed}\n\n"
     }
 
     private var addressView: TextView? = null

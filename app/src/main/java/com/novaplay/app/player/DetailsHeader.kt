@@ -110,13 +110,11 @@ class DetailsHeader(context: Context, private val onOpenListing: (url: String, t
         metaView.visibility = if (meta.isEmpty()) View.GONE else View.VISIBLE
 
         val desc = i?.description.orEmpty().trim()
-        val tags = i?.tags.orEmpty()
-        val hasMore = desc.isNotEmpty() || tags.isNotEmpty()
         descView.text = desc
         descView.visibility = if (expanded && desc.isNotEmpty()) View.VISIBLE else View.GONE
         moreView.text = if (expanded) "Show less" else "…more"
-        moreView.visibility = if (hasMore) View.VISIBLE else View.GONE
-        buildTags(if (expanded) tags else emptyList())
+        moreView.visibility = if (desc.isNotEmpty()) View.VISIBLE else View.GONE
+        buildTags(i?.tags.orEmpty())
         buildActions(v, i)
         buildChannel(v, i)
     }

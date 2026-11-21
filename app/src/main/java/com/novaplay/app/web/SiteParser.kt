@@ -38,7 +38,8 @@ object SiteParser {
             uploader = o.str("up"),
             uploaderUrl = o.str("upUrl"),
             quality = o.str("q"),
-            previewUrl = o.str("prev")
+            previewUrl = o.str("prev"),
+            thumbAlt = o.str("alt")
         )
     }
 
@@ -56,8 +57,25 @@ object SiteParser {
 
     /** Result of window.__novaCards(). */
     fun parseCards(o: JSONObject): SitePage {
-        val next = o.str("next")
-        return SitePage(parseVideos(o.optJSONArray("items")), next.ifEmpty { null }, o.str("title"))
+        val links = LinkedHashMap<Int, String>()
+        val arr = o.optJSONArray("pages")
+        if (arr != null) {
+            for (i in 0 until arr.length()) {
+                val p = arr.optJSONObject(i) ?: continue
+                val n = p.optInt("n", 0)
+                val u = p.str("url")
+                if (n > 0 && u.isNotEmpty()) links[n] = u
+            }
+        }
+        return SitePage(
+            videos = parseVideos(o.optJSONArray("items")),
+            nextUrl = o.str("next").ifEmpty { null },
+            title = o.str("title"),
+            template = o.str("tpl").ifEmpty { null },
+            page = o.optInt("cur", 0),
+            pages = o.optInt("max", 0),
+            pageLinks = links
+        )
     }
 
     // ---------- stream URLs ----------
@@ -152,8 +170,9 @@ object SiteParser {
             for (i in 0 until tagArr.length()) {
                 val t = tagArr.optJSONObject(i) ?: continue
                 val name = t.str("name")
-                val url = t.str("url")
-                if (name.isNotEmpty() && url.isNotEmpty()) tags.add(Source(name, url))
+                // a tag the page gives no address for still opens something: a search for its name
+                val url = t.str("url").ifEmpty { Site.search(name) }
+                if (name.isNotEmpty()) tags.add(Source(name, url))
             }
         }
 

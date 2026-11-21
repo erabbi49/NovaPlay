@@ -14,7 +14,9 @@ data class Video(
     val uploader: String = "",
     val uploaderUrl: String = "",
     val quality: String = "",
-    val previewUrl: String = ""
+    val previewUrl: String = "",
+    /** A second thumbnail to try when [thumb] fails to load. Not stored. */
+    val thumbAlt: String = ""
 ) {
     fun toJson(): JSONObject {
         val o = JSONObject()
@@ -213,5 +215,17 @@ class StreamInfo(
     }
 }
 
-/** One listing page (home / search / channel) plus where the next one lives. */
-class SitePage(val videos: List<Video>, val nextUrl: String?, val title: String = "")
+/**
+ * One listing page (home / search / channel) plus what the page says about its neighbours:
+ * the site's own "next" link, a URL pattern with {n} for the page number, which page this is
+ * and how many there are (0 = not stated), and the numbered links the site shows.
+ */
+class SitePage(
+    val videos: List<Video>,
+    val nextUrl: String?,
+    val title: String = "",
+    val template: String? = null,
+    val page: Int = 0,
+    val pages: Int = 0,
+    val pageLinks: Map<Int, String> = emptyMap()
+)

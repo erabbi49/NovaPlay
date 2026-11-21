@@ -110,6 +110,103 @@
   }
   window.__novaDecipher = decipherUrl;
 
+  // ----- tags / categories -----
+  var TAG_KEY = /(^|\.)(tags?|categories|videoTags|tagList|niches)$/i;
+  var TAG_PAGE = /^\/(?:[a-z]{2}\/)?(?:categories|tags|niches|hashtags?|pornstars)\/[^\/]+\/?$/i;
+
+  function tagUrl(o, listKey) {
+    var u = o.pageURL || o.pageUrl || o.url || o.link || o.href || '';
+    if (typeof u === 'string' && u) { return abs(u); }
+    var slug = o.slug || o.seoName || o.alias || '';
+    if (typeof slug === 'string' && slug && /categories$/i.test(listKey)) { return abs('/categories/' + encodeURIComponent(slug)); }
+    if (typeof slug === 'string' && slug && /tags?$/i.test(listKey)) { return abs('/tags/' + encodeURIComponent(slug)); }
+    return '';
+  }
+
+  function addTagList(list, listKey, out) {
+    for (var i = 0; i < list.length && i < 60; i++) {
+      var t = list[i];
+      if (typeof t === 'string') {
+        if (t.trim()) { out.push({ name: t.trim(), url: '' }); }
+      } else if (t && typeof t === 'object') {
+        var name = t.name || t.title || t.label || t.text || '';
+        if (typeof name === 'string' && name.trim()) { out.push({ name: name.trim(), url: tagUrl(t, listKey) }); }
+      }
+    }
+  }
+
+  /* Arrays called tags / categories inside the video's own part of the page JSON (the site menu lists every
+   * category too, so only paths that mention "video" count). */
+  function jsonTags(root) {
+    var out = [];
+    if (!root || typeof root !== 'object') { return out; }
+    var stack = [{ o: root, path: '' }];
+    var visited = 0;
+    while (stack.length && visited < 20000) {
+      var cur = stack.pop();
+      visited++;
+      var o = cur.o;
+      if (!o || typeof o !== 'object') { continue; }
+      if (Array.isArray(o)) {
+        if (o.length > 200) { continue; }
+        for (var i = 0; i < o.length; i++) { if (o[i] && typeof o[i] === 'object') { stack.push({ o: o[i], path: cur.path }); } }
+        continue;
+      }
+      for (var k in o) {
+        var v = o[k];
+        if (!v || typeof v !== 'object') { continue; }
+        var path = cur.path + '.' + k;
+        if (Array.isArray(v) && TAG_KEY.test(path) && /video/i.test(path)) { addTagList(v, path, out); }
+        else { stack.push({ o: v, path: path }); }
+      }
+    }
+    return out;
+  }
+
+  /* Links to a category / tag / star page that sit in the video's tag row (not in the menus). */
+  function domTags() {
+    var strict = [];
+    var loose = [];
+    var anchors = document.querySelectorAll('a[href]');
+    for (var i = 0; i < anchors.length && i < 3000; i++) {
+      var a = anchors[i];
+      var u;
+      try { u = new URL(a.href); } catch (e) { continue; }
+      if (!TAG_PAGE.test(u.pathname)) { continue; }
+      var name = txt(a).replace(/^#/, '');
+      if (!name || name.length > 40) { continue; }
+      var menu = a.closest ? a.closest('nav,header,footer,[class*="menu"],[class*="Menu"],[class*="sidebar"],[class*="Sidebar"]') : null;
+      if (menu) { continue; }
+      var tagged = false;
+      var p = a;
+      for (var d = 0; d < 3 && p && !tagged; d++) {
+        var cls = typeof p.className === 'string' ? p.className : '';
+        if (/tag/i.test(cls)) { tagged = true; }
+        p = p.parentElement;
+      }
+      (tagged ? strict : loose).push({ name: name, url: a.href });
+    }
+    return strict.length ? strict : loose.slice(0, 12);
+  }
+
+  function collectTags(init) {
+    var all = jsonTags(init).concat(domTags());
+    var out = [];
+    var at = Object.create(null);
+    for (var i = 0; i < all.length && out.length < 24; i++) {
+      var t = all[i];
+      var key = t.name.toLowerCase();
+      if (key in at) {
+        // the same tag from JSON (no address) and from the page (with one)
+        if (!out[at[key]].url && t.url) { out[at[key]].url = t.url; }
+        continue;
+      }
+      at[key] = out.length;
+      out.push({ name: t.name, url: t.url });
+    }
+    return out;
+  }
+
   window.__novaVideo = function (cfg) {
     var out = {
       title: '', thumb: '', dur: 0, up: '', upUrl: '', views: '', likes: '', desc: '',
@@ -128,12 +225,6 @@
         if (vm.author) { out.up = vm.author.name || ''; out.upUrl = vm.author.pageURL || vm.author.pageUrl || ''; }
         out.views = compact(vm.views);
         if (vm.rating) { out.likes = compact(vm.rating.likes); }
-        if (Array.isArray(vm.categories)) {
-          for (var c = 0; c < vm.categories.length; c++) {
-            var cat = vm.categories[c];
-            if (cat && cat.name) { out.tags.push({ name: String(cat.name), url: cat.url ? abs(cat.url) : '' }); }
-          }
-        }
       }
     } catch (e) {}
     if (!out.title) { out.title = txt(document.querySelector('h1')) || meta('og:title') || document.title || ''; }
@@ -144,14 +235,7 @@
       var ua = document.querySelector('a[href*="/users/"],a[href*="/creators/"],a[href*="/channels/"]');
       if (ua) { out.up = txt(ua); out.upUrl = ua.href; }
     }
-    if (!out.tags.length) {
-      var ta = document.querySelectorAll('a[href*="/categories/"],a[href*="/tags/"]');
-      var seenTag = Object.create(null);
-      for (var t = 0; t < ta.length && out.tags.length < 14; t++) {
-        var name = txt(ta[t]);
-        if (name && name.length < 40 && !seenTag[name]) { seenTag[name] = 1; out.tags.push({ name: name, url: ta[t].href }); }
-      }
-    }
+    try { out.tags = collectTags(init); } catch (e) { out.tags = []; }
 
     // ----- stream candidates -----
     var seen = Object.create(null);

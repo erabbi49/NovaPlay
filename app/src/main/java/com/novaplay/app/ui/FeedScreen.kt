@@ -18,8 +18,11 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.novaplay.app.R
 import com.novaplay.app.data.Library
+import com.novaplay.app.data.Prefs
+import com.novaplay.app.data.SitePage
 import com.novaplay.app.data.Source
 import com.novaplay.app.data.Video
+import com.novaplay.app.web.Paging
 import com.novaplay.app.web.Site
 import com.novaplay.app.web.SiteClient
 import com.novaplay.app.web.SiteException
@@ -44,8 +47,14 @@ class FeedScreen private constructor(
     private val ctx = activity
     private val items = ArrayList<Video>()
     private val seen = HashSet<String>()
-    private var nextUrl: String? = null
-    private var currentUrl = startUrl
+    private var currentUrl = startUrl // first page of the list on screen (the chip's address on Home)
+    private var pageNo = 1 // the page that was loaded last
+    private var pageMax = 0 // how many pages the site says there are, 0 = unknown
+    private var template: String? = null // address pattern with {n} for the page number
+    private var pageLinks: Map<Int, String> = emptyMap() // the site's own numbered links
+    private var nextLink: String? = null // the site's own "next page" link
+    private var more = false // another page is worth asking for
+    private var lastPaged = Prefs.pagedFeed
     private var footer = Footer.NONE
     private var footerError = ""
     private var loading = false
@@ -94,9 +103,9 @@ class FeedScreen private constructor(
         list.itemAnimator = null
         list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
-                if (dy <= 0 || loading) return
+                if (dy <= 0 || loading || Prefs.pagedFeed) return
                 val lm = recyclerView.layoutManager as? LinearLayoutManager ?: return
-                if (nextUrl != null && lm.findLastVisibleItemPosition() >= items.size - 4) {
+                if (more && lm.findLastVisibleItemPosition() >= items.size - 4) {
                     // the adapter must not change inside a scroll callback, so continue on the next frame
                     recyclerView.post { if (!loading) loadMore() }
                 }
@@ -240,7 +249,12 @@ class FeedScreen private constructor(
     private fun clearItems() {
         items.clear()
         seen.clear()
-        nextUrl = null
+        pageNo = 1
+        pageMax = 0
+        template = null
+        pageLinks = emptyMap()
+        nextLink = null
+        more = false
         adapter.notifyDataSetChanged()
     }
 
@@ -248,53 +262,76 @@ class FeedScreen private constructor(
         currentUrl = c.url
         buildChips()
         clearItems()
-        load(c.url, true)
+        loadPage(1, false)
     }
 
     // ---------- loading ----------
 
-    private fun reload() = load(currentUrl, true)
-
-    private fun loadMore() {
-        val n = nextUrl ?: return
-        load(n, false)
+    /** Where page [n] of the list on screen lives. */
+    private fun urlOfPage(n: Int): String {
+        if (n == pageNo + 1) nextLink?.let { return it }
+        pageLinks[n]?.let { return it }
+        if (n <= 1) return currentUrl
+        return Paging.fill(template ?: Paging.templateFor(currentUrl), n)
     }
 
-    private fun load(url: String, reset: Boolean) {
+    private fun reload() = loadPage(if (Prefs.pagedFeed) pageNo else 1, false)
+
+    private fun loadMore() {
+        if (!more || loading) return
+        loadPage(pageNo + 1, true)
+    }
+
+    /** Opens page [n]. With [append] it is added below what is on screen (endless scrolling), otherwise it replaces it. */
+    private fun loadPage(n: Int, append: Boolean) {
         job?.cancel()
         val gen = ++generation
+        val url = urlOfPage(n)
         loading = true
         retryAfterBrowser = false
         state.hide()
-        if (reset) {
-            footer = Footer.NONE
-            if (items.isEmpty()) spinner.visibility = View.VISIBLE
-        } else {
+        if (append) {
             footer = Footer.LOADING
-            adapter.notifyDataSetChanged()
+        } else {
+            footer = Footer.NONE
+            if (items.isEmpty()) spinner.visibility = View.VISIBLE else swipe.isRefreshing = true
         }
+        adapter.notifyDataSetChanged()
         job = activity.lifecycleScope.launch {
             try {
-                val page = SiteClient.listing(url)
+                val page = SiteClient.listing(url, n > 1)
                 if (gen != generation) return@launch
-                if (reset) {
-                    items.clear()
-                    seen.clear()
+                val fresh = if (append) page.videos.filter { it.id !in seen } else page.videos
+                if (fresh.isEmpty()) {
+                    // nothing new here: the list ends before this page
+                    more = false
+                    if (n > 1 && (pageMax == 0 || pageMax >= n)) pageMax = n - 1
+                    if (items.isEmpty()) {
+                        state.show("No videos found here.", "Try again", { reload() })
+                    } else if (!append) {
+                        Dialogs.toast(ctx, "Page $n has no videos")
+                    }
+                } else {
+                    if (!append) {
+                        items.clear()
+                        seen.clear()
+                    }
+                    for (v in fresh) if (seen.add(v.id)) items.add(v)
+                    pageNo = n
+                    absorb(page, url)
+                    if (!append) list.scrollToPosition(0)
                 }
-                for (v in page.videos) if (seen.add(v.id)) items.add(v)
-                nextUrl = page.nextUrl?.takeIf { it != url }
                 if (!isHome && screenTitle.isEmpty() && page.title.isNotEmpty()) {
                     screenTitle = page.title.substringBefore(" - ").substringBefore(" | ").trim().take(60)
                     topBar.title.text = screenTitle
                 }
                 footer = Footer.NONE
-                if (items.isEmpty()) state.show("No videos found here.", "Try again", { reload() })
             } catch (e: CancellationException) {
                 throw e
             } catch (e: SiteException) {
-                if (gen == generation) fail(e.userMessage(), e.kind, reset)
+                if (gen == generation) fail(e.userMessage(), e.kind, append, n)
             } catch (e: Exception) {
-                if (gen == generation) fail(e.message ?: "Could not load the page", null, reset)
+                if (gen == generation) fail(e.message ?: "Could not load the page", null, append, n)
             } finally {
                 if (gen == generation) {
                     loading = false
@@ -307,14 +344,46 @@ class FeedScreen private constructor(
         loadedOnce = true
     }
 
-    private fun fail(message: String, kind: SiteException.Kind?, wasReset: Boolean) {
+    /** Takes what [page] says about the other pages of the list. */
+    private fun absorb(page: SitePage, url: String) {
+        page.template?.let { template = it }
+        if (template == null) {
+            for ((k, v) in page.pageLinks) {
+                val t = Paging.inferTemplate(k, v)
+                if (t != null) {
+                    template = t
+                    break
+                }
+            }
+        }
+        pageLinks = page.pageLinks
+        nextLink = page.nextUrl?.takeIf { it != url }
+        val said = maxOf(page.pages, page.pageLinks.keys.maxOrNull() ?: 0)
+        pageMax = if (said >= pageNo) said else if (pageMax >= pageNo) pageMax else 0
+        // a "next" link past the last page the pager lists: the pager only shows some of the pages
+        if (nextLink != null && pageMax <= pageNo) pageMax = 0
+        more = when {
+            nextLink != null -> true
+            pageMax > 0 -> pageNo < pageMax
+            else -> page.videos.size >= FULL_PAGE
+        }
+    }
+
+    private fun fail(message: String, kind: SiteException.Kind?, append: Boolean, n: Int) {
         when {
             items.isEmpty() -> {
                 footer = Footer.NONE
                 retryAfterBrowser = kind == SiteException.Kind.CHALLENGE || kind == SiteException.Kind.NO_STREAM
                 state.show(message, "Try again", { reload() }, "Open in browser", { BrowserActivity.open(ctx, currentUrl) })
             }
-            wasReset -> Dialogs.toast(ctx, message) // a failed pull-to-refresh keeps what is on screen
+            kind == SiteException.Kind.EMPTY && n > 1 -> {
+                // there is no such page: the list ends before it
+                more = false
+                if (pageMax == 0 || pageMax >= n) pageMax = n - 1
+                footer = Footer.NONE
+                if (!append) Dialogs.toast(ctx, "Page $n has no videos")
+            }
+            !append -> Dialogs.toast(ctx, message) // a failed page change or refresh keeps what is on screen
             else -> {
                 footer = Footer.ERROR
                 footerError = message
@@ -326,7 +395,7 @@ class FeedScreen private constructor(
 
     override fun onShow() {
         if (isHome) buildChips()
-        if (!loadedOnce) load(currentUrl, true)
+        if (!loadedOnce) loadPage(1, false)
     }
 
     override fun onResume() {
@@ -336,8 +405,12 @@ class FeedScreen private constructor(
             currentUrl = Site.home()
             buildChips()
             clearItems()
-            load(currentUrl, true)
+            loadPage(1, false)
             return
+        }
+        if (lastPaged != Prefs.pagedFeed) {
+            lastPaged = Prefs.pagedFeed
+            adapter.notifyDataSetChanged()
         }
         if (retryAfterBrowser) reload()
         if (!isHome) updateSubButton()
@@ -352,18 +425,27 @@ class FeedScreen private constructor(
     private class Holder(view: View) : RecyclerView.ViewHolder(view)
 
     private inner class FeedAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
-        override fun getItemCount(): Int = items.size + if (footer == Footer.NONE) 0 else 1
+        private fun hasFooter(): Boolean = items.isNotEmpty() && (Prefs.pagedFeed || footer != Footer.NONE)
 
-        override fun getItemViewType(position: Int): Int = if (position < items.size) 0 else 1
+        override fun getItemCount(): Int = items.size + if (hasFooter()) 1 else 0
 
-        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder =
-            if (viewType == 0) Holder(VideoCardView(parent.context)) else Holder(footerView())
+        override fun getItemViewType(position: Int): Int = when {
+            position < items.size -> 0
+            Prefs.pagedFeed -> 2
+            else -> 1
+        }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder = when (viewType) {
+            0 -> Holder(VideoCardView(parent.context))
+            2 -> Holder(PagerView(parent.context))
+            else -> Holder(footerView())
+        }
 
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-            if (position < items.size) {
-                (holder.itemView as VideoCardView).bind(items[position], actions)
-            } else {
-                bindFooter(holder.itemView as LinearLayout)
+            when {
+                position < items.size -> (holder.itemView as VideoCardView).bind(items[position], actions)
+                Prefs.pagedFeed -> (holder.itemView as PagerView).bind(pageNo, pageMax, more, loading) { n -> loadPage(n, false) }
+                else -> bindFooter(holder.itemView as LinearLayout)
             }
         }
     }
@@ -396,6 +478,9 @@ class FeedScreen private constructor(
     }
 
     companion object {
+        /** An unknown-length list with at least this many videos on a page probably has another page. */
+        private const val FULL_PAGE = 12
+
         fun home(activity: MainActivity) = FeedScreen(activity, true, "", Site.home())
 
         fun listing(activity: MainActivity, url: String, title: String) = FeedScreen(activity, false, title, url)

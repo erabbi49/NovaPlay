@@ -32,7 +32,8 @@ class VideoActions(
 object Thumbs {
     private var agent: String? = null
 
-    fun load(view: ImageView, url: String) {
+    /** [alt] is tried once when [url] fails to load. */
+    fun load(view: ImageView, url: String, alt: String = "") {
         if (url.isEmpty()) {
             view.dispose()
             view.setImageDrawable(null)
@@ -43,6 +44,15 @@ object Thumbs {
             crossfade(true)
             addHeader("Referer", Site.base + "/")
             addHeader("User-Agent", ua)
+            if (alt.isNotEmpty() && alt != url) {
+                listener(onError = { _, _ ->
+                    view.load(alt) {
+                        crossfade(true)
+                        addHeader("Referer", Site.base + "/")
+                        addHeader("User-Agent", ua)
+                    }
+                })
+            }
         }
     }
 }
@@ -109,7 +119,7 @@ class ThumbBox(context: Context, ratio: Float, cornerDp: Int) : AspectFrame(cont
     }
 
     fun bind(v: Video) {
-        Thumbs.load(image, v.thumb)
+        Thumbs.load(image, v.thumb, v.thumbAlt)
         val d = Ui.formatSeconds(v.durationSec)
         duration.text = d
         duration.visibility = if (d.isEmpty()) View.GONE else View.VISIBLE

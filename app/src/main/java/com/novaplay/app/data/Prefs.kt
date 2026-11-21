@@ -98,4 +98,9 @@ object Prefs {
     var autoLandscapeFullscreen: Boolean
         get() = bool("auto_fs", true)
         set(v) = putBool("auto_fs", v)
+
+    /** true = lists show page numbers (1 2 3 ...) under them; false = endless scrolling. */
+    var pagedFeed: Boolean
+        get() = bool("paged_feed", true)
+        set(v) = putBool("paged_feed", v)
 }

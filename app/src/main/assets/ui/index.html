@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="color-scheme" content="dark light">
+<title>NovaPlay</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="hdr">
+  <header id="top">
+    <a class="logo" data-go="home" data-root="1">
+      <svg viewBox="0 0 28 20" width="28" height="20" aria-hidden="true"><rect width="28" height="20" rx="6" fill="#ff2d55"/><path d="M11 5.5v9l8-4.5z" fill="#fff"/></svg>
+      <b>NovaPlay</b>
+    </a>
+    <span class="sp"></span>
+    <button class="ib" id="bSearch" aria-label="Search"></button>
+    <button class="ib" id="bGear" aria-label="Settings"></button>
+  </header>
+  <div id="chips"></div>
+</div>
+<main id="view"></main>
+<nav id="nav"></nav>
+
+<div id="mini">
+  <div class="mi" id="miInfo"><b id="miT"></b><small id="miS"></small></div>
+  <button class="ib" id="miPlay" aria-label="Play or pause"></button>
+  <button class="ib" id="miClose" aria-label="Close"></button>
+  <div class="mprog"><i id="miP"></i></div>
+</div>
+
+<section id="watch">
+  <div class="ws" id="ws">
+    <canvas id="amb" width="48" height="27"></canvas>
+    <div class="wb" id="wb"></div>
+  </div>
+</section>
+
+<div id="player" class="hidden">
+  <div class="pv">
+    <video id="vid" playsinline preload="auto"></video>
+    <div id="frame"></div>
+    <div class="gest" id="gest"></div>
+    <div class="ctl" id="ctl">
+      <div class="ctop"><button class="ib" id="bMin" aria-label="Minimize"></button><span class="sp"></span><button class="ib" id="bSet" aria-label="Settings"></button></div>
+      <div class="cmid"><button class="ib" id="bPrev" aria-label="Previous"></button><button class="ib big" id="bPlay" aria-label="Play or pause"></button><button class="ib" id="bNext" aria-label="Next"></button></div>
+      <div class="cbot"><span class="tm"><span id="tCur">0:00</span><span class="dim"> / <span id="tDur">0:00</span></span></span><span class="sp"></span><button class="ib" id="bFs" aria-label="Full screen"></button></div>
+      <div class="seek" id="seek"><span class="trk" id="trk"><i class="bufb" id="sBuf"></i><i class="plb" id="sPl"></i><b class="knob" id="sKn"></b></span></div>
+    </div>
+    <div class="thin"><i id="sThin"></i></div>
+    <div class="spin" id="spin"></div>
+    <div class="rip l" id="ripL"><span>10 seconds</span></div>
+    <div class="rip r" id="ripR"><span>10 seconds</span></div>
+    <div class="badge" id="badge">2× speed</div>
+    <div class="perr" id="perr"></div>
+    <div class="upn" id="upn"></div>
+  </div>
+</div>
+
+<div id="search" hidden>
+  <div class="sbar">
+    <button class="ib" id="sBack" aria-label="Back"></button>
+    <input id="sq" type="search" placeholder="Search videos" autocomplete="off" autocapitalize="none" enterkeyhint="search">
+    <button class="ib" id="sClr" aria-label="Clear"></button>
+  </div>
+  <div id="sug"></div>
+</div>
+
+<div id="sheetwrap"></div>
+<div id="toast"></div>
+<div id="gate" hidden>
+  <div class="gbox">
+    <h2>Adults only</h2>
+    <p>NovaPlay shows adult videos. Continue only if you are 18 or older and it is legal where you live.</p>
+    <button class="btn" id="gYes">I’m 18 or older</button>
+    <button class="btn ghost" id="gNo">Leave</button>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

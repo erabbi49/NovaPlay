@@ -1,0 +1,46 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'app.novaplay.modern'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'app.novaplay.modern'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '2.0.0'
+    }
+
+    // one fixed key, so every new build installs over the previous one
+    signingConfigs {
+        nova {
+            storeFile file('nova.keystore')
+            storePassword 'novaplay'
+            keyAlias 'nova'
+            keyPassword 'novaplay'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.nova
+        }
+        debug {
+            signingConfig signingConfigs.nova
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}

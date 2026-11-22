@@ -393,6 +393,33 @@ class PlayerActivity : BaseActivity(), NovaPlayerView.Host {
         BrowserActivity.open(this, Playback.current?.url ?: Site.home())
     }
 
+    /** Hands the stream to another player app (VLC, MX Player ...). */
+    override fun onOpenExternal() {
+        val info = Playback.info
+        val url = info?.mp4?.maxByOrNull { it.height }?.url ?: info?.hlsUrl
+        if (info == null || url == null) {
+            Dialogs.toast(this, "The video is not ready yet")
+            return
+        }
+        val hls = info.hlsUrl == url
+        val i = Intent(Intent.ACTION_VIEW)
+        i.setDataAndType(android.net.Uri.parse(url), if (hls) "application/x-mpegURL" else "video/mp4")
+        i.putExtra("title", Playback.current?.title ?: info.title)
+        // MX Player understands these; the stream usually wants the site as referer
+        val headers = ArrayList<String>()
+        for ((k, v) in info.headers) {
+            headers.add(k)
+            headers.add(v)
+        }
+        if (headers.isNotEmpty()) i.putExtra("headers", headers.toTypedArray())
+        try {
+            Playback.player.pause()
+            startActivity(Intent.createChooser(i, "Play with"))
+        } catch (e: Exception) {
+            Dialogs.toast(this, "No other video player found")
+        }
+    }
+
     override fun hostWindow(): Window = window
 
     // ---------- picture-in-picture ----------

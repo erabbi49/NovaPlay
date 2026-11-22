@@ -134,6 +134,93 @@ object Prefs {
         get() = bool("auto_fs", true)
         set(v) = putBool("auto_fs", v)
 
+    // ---------- look and behaviour ----------
+
+    /** The colour of progress bars, highlights and switches (ARGB). */
+    var accent: Int
+        get() = int("accent", 0xFFFF2D55.toInt())
+        set(v) = putInt("accent", v)
+
+    /** The tab the app opens on (one of the Nav.TAB_* names). */
+    var startTab: String
+        get() = sp.getString("start_tab", "home") ?: "home"
+        set(v) = sp.edit().putString("start_tab", v).apply()
+
+    /** Picking a quality in the player also becomes the default for this kind of connection. */
+    var rememberQuality: Boolean
+        get() = bool("remember_quality", false)
+        set(v) = putBool("remember_quality", v)
+
+    // which buttons the player shows
+    var pbAmbient: Boolean
+        get() = bool("pb_ambient", true)
+        set(v) = putBool("pb_ambient", v)
+
+    var pbPip: Boolean
+        get() = bool("pb_pip", true)
+        set(v) = putBool("pb_pip", v)
+
+    var pbSpeed: Boolean
+        get() = bool("pb_speed", true)
+        set(v) = putBool("pb_speed", v)
+
+    var pbQuality: Boolean
+        get() = bool("pb_quality", true)
+        set(v) = putBool("pb_quality", v)
+
+    var pbLoop: Boolean
+        get() = bool("pb_loop", true)
+        set(v) = putBool("pb_loop", v)
+
+    /** All settings as a piece of text that [importAll] understands. Leaves out the 18+ confirmation. */
+    fun exportAll(): String {
+        val o = org.json.JSONObject()
+        for ((k, v) in sp.all) {
+            if (k == "age_ok" || v == null) continue
+            val entry = org.json.JSONArray()
+            when (v) {
+                is Boolean -> { entry.put("b"); entry.put(v) }
+                is Int -> { entry.put("i"); entry.put(v) }
+                is Long -> { entry.put("l"); entry.put(v) }
+                is Float -> { entry.put("f"); entry.put(v.toDouble()) }
+                is String -> { entry.put("s"); entry.put(v) }
+                else -> continue
+            }
+            o.put(k, entry)
+        }
+        return "NovaPlay-settings " + o.toString()
+    }
+
+    /** Applies text made by [exportAll]; returns how many settings were set, or -1 when it is not such text. */
+    fun importAll(text: String): Int {
+        val body = text.trim().removePrefix("NovaPlay-settings").trim()
+        val o = try {
+            org.json.JSONObject(body)
+        } catch (e: Exception) {
+            return -1
+        }
+        val ed = sp.edit()
+        var n = 0
+        val keys = o.keys()
+        while (keys.hasNext()) {
+            val k = keys.next()
+            if (k == "age_ok") continue
+            val a = o.optJSONArray(k) ?: continue
+            if (a.length() < 2) continue
+            when (a.optString(0)) {
+                "b" -> ed.putBoolean(k, a.optBoolean(1))
+                "i" -> ed.putInt(k, a.optInt(1))
+                "l" -> ed.putLong(k, a.optLong(1))
+                "f" -> ed.putFloat(k, a.optDouble(1).toFloat())
+                "s" -> ed.putString(k, a.optString(1))
+                else -> continue
+            }
+            n++
+        }
+        ed.apply()
+        return n
+    }
+
     // ---------- layout ----------
 
     /** Lists as small rows (thumbnail on the left) instead of big cards. */

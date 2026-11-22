@@ -14,6 +14,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
 import com.novaplay.app.CrashLog
+import com.novaplay.app.Nav
 import com.novaplay.app.NovaApp
 import com.novaplay.app.R
 import com.novaplay.app.data.Library
@@ -114,6 +115,26 @@ class SettingsActivity : BaseActivity() {
             }
         )
 
+        f.choice(
+            "Accent colour",
+            listOf(
+                "Pink" to 0xFFFF2D55.toInt(), "Red" to 0xFFE62117.toInt(), "Orange" to 0xFFFF6D00.toInt(),
+                "Green" to 0xFF00B050.toInt(), "Blue" to 0xFF2979FF.toInt(), "Purple" to 0xFFAA47FF.toInt()
+            ),
+            { Prefs.accent },
+            { Prefs.accent = it },
+            onChanged = { restartApp() }
+        )
+        f.choice(
+            "Start screen",
+            listOf(
+                "Home" to Nav.TAB_HOME, "Subscriptions" to Nav.TAB_SUBS, "Queue" to Nav.TAB_QUEUE,
+                "Downloads" to Nav.TAB_DOWNLOADS, "You" to Nav.TAB_LIBRARY
+            ),
+            { Prefs.startTab },
+            { Prefs.startTab = it }
+        )
+
         f.section("Lists")
         f.toggle(
             "Page numbers",
@@ -185,6 +206,24 @@ class SettingsActivity : BaseActivity() {
             { Prefs.streamQualityMobile = it }
         )
         f.note("The highest quality the player may pick. You can still change it for one video in the player's settings.")
+        f.toggle(
+            "Remember quality changes",
+            "A quality you pick in the player becomes the new default",
+            { Prefs.rememberQuality },
+            { Prefs.rememberQuality = it }
+        )
+
+        f.section("Player buttons")
+        f.multi(
+            "Buttons in the player",
+            listOf(
+                Form.Check("Ambient mode", { Prefs.pbAmbient }, { Prefs.pbAmbient = it }),
+                Form.Check("Picture-in-picture", { Prefs.pbPip }, { Prefs.pbPip = it }),
+                Form.Check("Speed", { Prefs.pbSpeed }, { Prefs.pbSpeed = it }),
+                Form.Check("Quality", { Prefs.pbQuality }, { Prefs.pbQuality = it }),
+                Form.Check("Loop", { Prefs.pbLoop }, { Prefs.pbLoop = it })
+            )
+        )
     }
 
     private fun gestures(f: Form) {
@@ -294,8 +333,51 @@ class SettingsActivity : BaseActivity() {
     private fun about(f: Form) {
         f.section("About")
         f.note("NovaPlay 1.2. Videos are loaded from the site you choose in Settings \u203a Site; NovaPlay itself hosts nothing.")
+        f.section("Settings backup")
+        f.action("Back up settings", "Copy all your settings as text") {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("NovaPlay settings", Prefs.exportAll()))
+            Dialogs.toast(this, "Settings copied. Paste them somewhere safe")
+        }
+        f.action("Restore settings", "Paste settings you copied before") { restoreSettings() }
+        f.section("Help")
         f.action("Last crash report", "If the app closed by itself, copy this report and send it on") { showCrash() }
         f.action("Diagnostics", "Check how the site's pages are read; copy the result if something looks wrong") { runDiagnostics() }
+    }
+
+    private fun restoreSettings() {
+        val box = android.widget.EditText(this)
+        box.hint = "Paste the copied settings here"
+        box.setTextColor(Ui.text(this))
+        box.setHintTextColor(Ui.textDim(this))
+        box.minLines = 4
+        box.gravity = android.view.Gravity.TOP
+        val pad = Ui.dp(this, 20)
+        val wrap = LinearLayout(this)
+        wrap.setPadding(pad, Ui.dp(this, 8), pad, 0)
+        wrap.addView(box, Ui.lp(Ui.MATCH, Ui.WRAP))
+        AlertDialog.Builder(this)
+            .setTitle("Restore settings")
+            .setView(wrap)
+            .setPositiveButton("Restore") { _, _ ->
+                val n = Prefs.importAll(box.text.toString())
+                if (n < 0) {
+                    Dialogs.toast(this, "That is not NovaPlay settings")
+                } else {
+                    Dialogs.toast(this, "Restored $n settings")
+                    NovaApp.applyTheme()
+                    restartApp()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** Starts the app again from its first screen so every screen is built with the new look. */
+    private fun restartApp() {
+        val i = Intent(this, MainActivity::class.java)
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        startActivity(i)
     }
 
     private fun showCrash() {

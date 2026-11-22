@@ -202,15 +202,18 @@ class AmbientGlowView(context: Context) : View(context) {
         val key = "$w/$h/$pb/${Prefs.ambientStrength}/${Prefs.ambientReadable}/$bg"
         if (key != shaderKey) {
             shaderKey = key
-            val near = (1f - s) * 0.85f
-            val below = (near + 0.28f + if (Prefs.ambientReadable) 0.17f else 0f).coerceAtMost(0.93f)
-            val far = (below + 0.07f).coerceAtMost(0.97f)
+            val readable = Prefs.ambientReadable
+            val near = (1f - s) * 0.85f // over the player's own area, which only shows in the bars around the video
+            // right under the player the title and channel sit: with "keep text readable" the light is held back there
+            val edge = if (readable) maxOf(near, 1f - s * 0.6f) else near
+            val below = if (readable) (edge + 0.2f).coerceAtMost(0.93f) else (near + 0.28f).coerceAtMost(0.93f)
+            val far = (below + 0.1f).coerceAtMost(0.97f)
             val p1 = (pb.toFloat() / h).coerceIn(0.05f, 0.8f)
-            val p2 = (p1 + 0.14f).coerceAtMost(0.95f)
+            val p2 = (p1 + 0.16f).coerceAtMost(0.95f)
             scrim.shader = LinearGradient(
                 0f, 0f, 0f, hf,
-                intArrayOf(withAlpha(bg, near), withAlpha(bg, near), withAlpha(bg, below), withAlpha(bg, far)),
-                floatArrayOf(0f, p1, p2, 1f),
+                intArrayOf(withAlpha(bg, near), withAlpha(bg, near), withAlpha(bg, edge), withAlpha(bg, below), withAlpha(bg, far)),
+                floatArrayOf(0f, p1 - 0.002f, p1, p2, 1f),
                 Shader.TileMode.CLAMP
             )
         }

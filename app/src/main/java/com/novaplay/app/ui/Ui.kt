@@ -33,7 +33,8 @@ object Ui {
     fun text(ctx: Context): Int = ctx.getColor(R.color.on_surface)
     fun textDim(ctx: Context): Int = ctx.getColor(R.color.on_surface_variant)
     fun divider(ctx: Context): Int = ctx.getColor(R.color.divider)
-    fun accent(ctx: Context): Int = ctx.getColor(R.color.nova_accent)
+    @Suppress("UNUSED_PARAMETER")
+    fun accent(ctx: Context): Int = Prefs.accent
     fun chipBg(ctx: Context): Int = if (amoled()) 0xFF1F1F1F.toInt() else ctx.getColor(R.color.chip_bg)
     fun chipSelected(ctx: Context): Int = ctx.getColor(R.color.chip_selected)
     fun chipSelectedText(ctx: Context): Int = ctx.getColor(R.color.chip_selected_text)
@@ -48,6 +49,20 @@ object Ui {
     }
 
     fun lp(w: Int, h: Int): LinearLayout.LayoutParams = LinearLayout.LayoutParams(w, h)
+
+    /** Colours a switch with the accent colour when it is on. */
+    fun tintSwitch(ctx: Context, sw: android.widget.Switch) {
+        val on = intArrayOf(android.R.attr.state_checked)
+        val off = intArrayOf()
+        val states = arrayOf(on, off)
+        val accent = accent(ctx)
+        val dim = textDim(ctx)
+        sw.thumbTintList = ColorStateList(states, intArrayOf(accent, dim))
+        sw.trackTintList = ColorStateList(
+            states,
+            intArrayOf(accent and 0x00FFFFFF or 0x80000000.toInt(), dim and 0x00FFFFFF or 0x55000000)
+        )
+    }
 
     fun rounded(color: Int, radiusPx: Float): GradientDrawable {
         val d = GradientDrawable()

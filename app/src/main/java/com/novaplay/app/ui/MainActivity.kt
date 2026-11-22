@@ -43,7 +43,7 @@ class MainActivity : BaseActivity() {
     private lateinit var mini: MiniPlayerView
     private val roots = HashMap<String, Screen>()
     private val stacks = HashMap<String, ArrayList<Screen>>()
-    private var tab = Nav.TAB_HOME
+    private var tab = Prefs.startTab.takeIf { id -> tabs.any { it.id == id } } ?: Nav.TAB_HOME
     private var shown: Screen? = null
     private var started = false
 

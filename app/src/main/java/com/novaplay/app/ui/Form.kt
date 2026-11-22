@@ -60,6 +60,7 @@ class Form(private val ctx: Context, private val parent: LinearLayout) {
     fun toggle(title: String, subtitle: String?, get: () -> Boolean, set: (Boolean) -> Unit) {
         val r = row(title, subtitle)
         val sw = Switch(ctx)
+        Ui.tintSwitch(ctx, sw)
         sw.isChecked = get()
         sw.setOnCheckedChangeListener { _, checked -> set(checked) }
         r.box.addView(sw, Ui.lp(Ui.WRAP, Ui.WRAP))
@@ -89,6 +90,32 @@ class Form(private val ctx: Context, private val parent: LinearLayout) {
                     onChanged?.invoke()
                 }
                 .setNegativeButton("Cancel", null)
+                .show()
+        }
+    }
+
+    /** One on/off choice of a [multi] row. */
+    class Check(val label: String, val get: () -> Boolean, val set: (Boolean) -> Unit)
+
+    /** A row that opens a list of check boxes; shows which ones are on underneath. */
+    fun multi(title: String, options: List<Check>) {
+        val r = row(title, null)
+        fun summary(): String {
+            val on = options.filter { it.get() }
+            return when {
+                on.size == options.size -> "All"
+                on.isEmpty() -> "None"
+                else -> on.joinToString(", ") { it.label }
+            }
+        }
+        setSubtitle(r.subtitle, summary())
+        r.box.setOnClickListener {
+            val labels = Array<CharSequence>(options.size) { options[it].label }
+            val checked = BooleanArray(options.size) { options[it].get() }
+            AlertDialog.Builder(ctx)
+                .setTitle(title)
+                .setMultiChoiceItems(labels, checked) { _, which, isChecked -> options[which].set(isChecked) }
+                .setPositiveButton("Done") { _, _ -> setSubtitle(r.subtitle, summary()) }
                 .show()
         }
     }

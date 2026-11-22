@@ -85,7 +85,9 @@ class DetailsAdapter(
         val lp = Ui.lp(Ui.WRAP, Ui.WRAP)
         lp.rightMargin = Ui.dp(ctx, 8)
         row.addView(label, lp)
-        row.addView(Switch(ctx), Ui.lp(Ui.WRAP, Ui.WRAP))
+        val sw = Switch(ctx)
+        Ui.tintSwitch(ctx, sw)
+        row.addView(sw, Ui.lp(Ui.WRAP, Ui.WRAP))
         return row
     }
 

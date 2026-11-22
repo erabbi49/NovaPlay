@@ -649,6 +649,10 @@ object Playback {
     fun setQuality(height: Int) {
         val p = exo ?: return
         forcedHeight = height
+        if (Prefs.rememberQuality) {
+            // the pick becomes the default for the kind of connection in use now
+            if (Prefs.streamQualityMobile >= 0 && onMeteredNetwork()) Prefs.streamQualityMobile = height else Prefs.streamQuality = height
+        }
         if (isPlayingHls) {
             val b = p.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_VIDEO)
             val cap = qualityCap()

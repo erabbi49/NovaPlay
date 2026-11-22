@@ -44,6 +44,7 @@ class NovaPlayerView(context: Context) : FrameLayout(context) {
         fun onEnterPip() {}
         fun onToggleAmbient() {}
         fun onOpenInBrowser() {}
+        fun onOpenExternal() {}
         fun hostWindow(): Window? = null
     }
 
@@ -505,6 +506,12 @@ class NovaPlayerView(context: Context) : FrameLayout(context) {
         btnLoop.alpha = if (Prefs.repeatMode == 0) 0.6f else 1f
         btnLoop.setColorFilter(if (Prefs.repeatMode == 0) white else Ui.accent(context))
         btnAmbient.alpha = if (ambientOn) 1f else 0.6f
+        // the buttons the person chose to see (Settings > Playback > Player buttons)
+        btnAmbient.visibility = if (Prefs.pbAmbient) View.VISIBLE else View.GONE
+        btnPip.visibility = if (Prefs.pbPip) View.VISIBLE else View.GONE
+        btnSpeed.visibility = if (Prefs.pbSpeed) View.VISIBLE else View.GONE
+        btnQuality.visibility = if (Prefs.pbQuality) View.VISIBLE else View.GONE
+        btnLoop.visibility = if (Prefs.pbLoop) View.VISIBLE else View.GONE
         updateProgress()
     }
 
@@ -605,6 +612,15 @@ class NovaPlayerView(context: Context) : FrameLayout(context) {
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
         if (Prefs.pinchZoom && !locked && !pipMode) scaler.onTouchEvent(e)
+        if (e.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
+            // a second finger: whatever the first one was starting (a hold, a swipe) is called off
+            val cancel = MotionEvent.obtain(e)
+            cancel.action = MotionEvent.ACTION_CANCEL
+            detector.onTouchEvent(cancel)
+            cancel.recycle()
+            if (boosting) endBoost()
+            mode = Mode.NONE
+        }
         // two fingers belong to the pinch; the single-finger gestures only see one finger
         if (e.pointerCount == 1 && !scaler.isInProgress) detector.onTouchEvent(e)
         if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) {
@@ -772,6 +788,7 @@ class NovaPlayerView(context: Context) : FrameLayout(context) {
             .add(R.drawable.ic_fullscreen, "Aspect ratio", aspectLabel()) { showAspectMenu() }
             .add(R.drawable.ic_timer, "Sleep timer") { showSleepMenu() }
             .add(R.drawable.ic_lock, "Lock controls") { setLocked(true) }
+            .add(R.drawable.ic_forward, "Play in another app") { host?.onOpenExternal() }
             .add(R.drawable.ic_browser, "Open in browser") { host?.onOpenInBrowser() }
             .show()
     }

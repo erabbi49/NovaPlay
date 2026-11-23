@@ -574,6 +574,7 @@
   function startSrc(s) {
     if (!s) { setBusy(false); showErr('No playable stream was found.', true); return; }
     S.curSrc = s; $('#perr').classList.remove('on'); setBusy(true);
+    if (N && N.allowMedia && /^https?:/.test(s.src)) N.allowMedia(s.src); /* the shell fetches this server's video with the site's headers */
     vid.src = s.src; vid.load();
     var pl = vid.play(); if (pl && pl.catch) pl.catch(function () {});
   }
@@ -637,6 +638,13 @@
     if (!triedLower && lower.length) { triedLower = true; resumeAt = vid.currentTime || resumeAt; toast('Switching to ' + lower[0].label); startSrc(lower[0]); return; }
     setBusy(false); showErr('This video couldn’t be loaded.', true);
   }
+  /* the site's video servers answer a request that doesn't look like it comes from the site with a short
+     "only available at ..." clip: far shorter than the video it should be, so open the site's own player instead */
+  function looksBlocked() {
+    var v = S.cur, d = vid.duration;
+    return !!(v && S.curSrc && /^https?:/.test(S.curSrc.src) && v.sec >= 120 && isFinite(d) && d > 0 && d < 180 && d < v.sec * 0.2);
+  }
+  function blocked() { toast('The site blocked this stream. Opening its own player…'); useEmbed(S.cur); }
   vid.addEventListener('play', playState); vid.addEventListener('pause', playState);
   vid.addEventListener('playing', function () { setBusy(false); playState(); showUI(); });
   vid.addEventListener('waiting', function () { setBusy(true); });
@@ -645,6 +653,7 @@
   vid.addEventListener('durationchange', function () { paint(); });
   vid.addEventListener('timeupdate', function () { paint(); paintBuf(); if (Date.now() - lastSave > 5000) { lastSave = Date.now(); savePos(); } });
   vid.addEventListener('loadedmetadata', function () {
+    if (looksBlocked()) { blocked(); return; }
     if (resumeAt > 0 && isFinite(vid.duration) && resumeAt < vid.duration - 6) vid.currentTime = resumeAt;
     resumeAt = 0; vid.playbackRate = S.rate || 1; paint();
   });

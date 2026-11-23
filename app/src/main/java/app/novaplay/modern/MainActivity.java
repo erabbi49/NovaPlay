@@ -35,17 +35,36 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
+import java.util.Collections;
+import java.util.Locale;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * NovaPlay 2: a thin native shell. The whole UI lives in assets/ui (HTML, CSS, JS).
  * The shell adds what a web page cannot do on its own: downloads, picture-in-picture,
- * fullscreen/orientation, background playback and network-level ad blocking.
+ * fullscreen/orientation, background playback, network-level ad blocking and fetching the
+ * video files with the site's own headers (see MediaProxy).
  */
 public class MainActivity extends Activity {
     private static final int BG_DARK = 0xFF0F0F0F;
 
+    /** The WebView's cookies for a URL, for the video requests MediaProxy makes. */
+    private static final MediaProxy.Cookies COOKIES = new MediaProxy.Cookies() {
+        @Override
+        public String get(String url) {
+            try {
+                return CookieManager.getInstance().getCookie(url);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+    };
+
     private WebView web;
     private String ua = "";
+    /** Hosts (besides the site's own) the page is about to play video from; filled by Bridge.allowMedia. */
+    private final Set<String> mediaDomains = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private volatile boolean playing = false;
     private volatile boolean autoPip = true;
     private boolean foreground = false;
@@ -88,8 +107,26 @@ public class MainActivity extends Activity {
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
                 Uri u = request.getUrl();
                 String scheme = u.getScheme();
-                if (("http".equals(scheme) || "https".equals(scheme)) && AdBlock.isBlocked(u.getHost())) {
+                if (!"http".equals(scheme) && !"https".equals(scheme)) return null;
+                String host = u.getHost();
+                if (AdBlock.isBlocked(host)) {
                     return new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream(new byte[0]));
+                }
+                // video files: the site's servers refuse a request without the site's Referer, so fetch it with one
+                if ("GET".equalsIgnoreCase(request.getMethod())
+                        && MediaProxy.wants(host, u.getPath(), request.getRequestHeaders(), mediaDomains)) {
+                    MediaProxy.Reply r = MediaProxy.fetch(u.toString(), request.getRequestHeaders(), ua, COOKIES);
+                    if (r != null) {
+                        try {
+                            return new WebResourceResponse(r.mime, null, r.status, r.reason, r.headers, r.body);
+                        } catch (IllegalArgumentException e) {
+                            try {
+                                r.body.close();
+                            } catch (Exception ignored) {
+                                // nothing left to close
+                            }
+                        }
+                    }
                 }
                 return null;
             }
@@ -287,6 +324,17 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void setAutoPip(boolean on) {
             autoPip = on;
+        }
+
+        /** The page is about to play [url]: its host's video files are fetched with the site's headers too. */
+        @JavascriptInterface
+        public void allowMedia(String url) {
+            try {
+                String h = MediaProxy.registrable(Uri.parse(url).getHost());
+                if (h != null && !h.isEmpty()) mediaDomains.add(h.toLowerCase(Locale.ROOT));
+            } catch (Exception ignored) {
+                // not a usable URL
+            }
         }
 
         @JavascriptInterface

@@ -21,6 +21,9 @@ import java.util.Set;
  * the WebView asks {@link #fetch}: it repeats the request natively with the site's Referer and the same browser
  * identity the page used, without the markers a WebView adds, and hands the bytes back, partial (Range) answers
  * included so seeking and buffering keep working.
+ *
+ * The player normally reaches this through {@link LocalMediaServer}, which gives it the video over plain HTTP; the
+ * WebView's request interception is the way back when that server cannot be used.
  */
 final class MediaProxy {
     /** What a visitor on the site's own pages sends as Referer. */
@@ -102,7 +105,7 @@ final class MediaProxy {
                     cur = new URL(new URL(cur), loc).toString();
                     continue;
                 }
-                return reply(c, code, cur);
+                return reply(c, code, cur, in);
             }
         } catch (Exception ignored) {
             // fall back to the WebView's own request
@@ -134,7 +137,7 @@ final class MediaProxy {
         return c;
     }
 
-    private static Reply reply(HttpURLConnection c, int code, String url) throws IOException {
+    private static Reply reply(HttpURLConnection c, int code, String url, Map<String, String> in) throws IOException {
         if (code < 100 || code > 599 || (code >= 300 && code < 400)) {
             c.disconnect();
             return null;
@@ -154,16 +157,56 @@ final class MediaProxy {
             }
             h.put(k, sb.toString());
         }
-        return new Reply(code, reasonOf(code, c.getResponseMessage()), mimeOf(c.getContentType(), url), h, new Closing(raw, c));
+        long aligned = code == 206 ? rangeStart(in) : 0;
+        return new Reply(code, reasonOf(code, c.getResponseMessage()), mimeOf(c.getContentType(), url), h, new Closing(raw, c, aligned));
     }
 
-    /** Closing the stream (the player seeked or left) cuts the connection instead of reading out the rest of the file. */
+    /** Where a "Range: bytes=N-..." request starts (N), or 0 when there is no such range. */
+    static long rangeStart(Map<String, String> headers) {
+        String r = header(headers, "Range");
+        if (r == null) return 0;
+        r = r.trim();
+        if (!r.regionMatches(true, 0, "bytes=", 0, 6)) return 0;
+        int dash = r.indexOf('-', 6);
+        if (dash <= 6) return 0; // "bytes=-500" (the last 500 bytes) has no start
+        try {
+            return Math.max(0, Long.parseLong(r.substring(6, dash).trim()));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Closing the stream (the player seeked or left) cuts the connection instead of reading out the rest of the file.
+     *
+     * When the WebView answers a ranged request from a stream, it applies the Range header to that stream on its own:
+     * it asks how much is available and skips ahead to the first byte. This stream already begins at that byte (the
+     * range was asked of the server), so it reports nothing as available and counts the first [aligned] bytes of
+     * "skipping" as done, instead of throwing away the start of the very bytes that were asked for.
+     */
     private static final class Closing extends FilterInputStream {
         private final HttpURLConnection conn;
+        private long skipCredit;
 
-        Closing(InputStream in, HttpURLConnection conn) {
+        Closing(InputStream in, HttpURLConnection conn, long aligned) {
             super(in);
             this.conn = conn;
+            this.skipCredit = aligned;
+        }
+
+        @Override
+        public int available() {
+            return 0;
+        }
+
+        @Override
+        public long skip(long n) throws IOException {
+            if (skipCredit > 0 && n > 0) {
+                long take = Math.min(n, skipCredit);
+                skipCredit -= take;
+                return take;
+            }
+            return super.skip(n);
         }
 
         @Override

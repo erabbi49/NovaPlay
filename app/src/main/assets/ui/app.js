@@ -172,7 +172,8 @@
   var S = { tk: 0, ptk: 0, rk: null, route: { name: 'home', q: {}, key: '' }, stack: [], scroll: {}, restore: false, queue: [], cur: null, curSrc: null, src: [], rel: [], trend: null, chipsFn: null, dlTimer: 0, dlSig: '', rate: 1 };
   var view = $('#view');
   var W = $('#watch'), P = $('#player'), vid = $('#vid');
-  var lastSave = 0, uiT = 0, resumeAt = 0, triedLower = false, upnT = 0, toastT = 0, sheetRows = null;
+  var lastSave = 0, uiT = 0, resumeAt = 0, triedLower = false, upnT = 0, toastT = 0, sheetRows = null, lastLoad = 0;
+  function logv(m) { try { if (N && N.logMedia) N.logMedia(m); } catch (e) {} } /* a line in Settings > Video connection log */
 
   /* ---------- small UI helpers ---------- */
   function toast(m) { var t = $('#toast'); t.innerHTML = '<span>' + esc(m) + '</span>'; t.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(function () { t.classList.remove('on'); }, 2300); }
@@ -365,8 +366,13 @@
       tog('autoplay', 'next', 'Autoplay next video', s.autoplay) + tog('bg', 'headset', 'Keep playing in background', s.bg, 'Audio continues when you leave the app') + tog('pip', 'pip', 'Pop-out player when you leave', s.pip, 'Picture-in-picture while a video is playing') + tog('resume', 'history', 'Resume where you left off', s.resume) +
       '<div class="grp">Content</div>' + row('gay', 'tag', 'Show', ['Straight only', 'Everything', 'Gay only'][s.gay]) + tog('lq', 'quality', 'Include low-quality videos', !!s.lq) +
       '<div class="grp">Privacy</div>' + tog('hist', 'history', 'Pause watch history', !s.hist) + row('clearhist', 'trash', 'Clear watch history', '') + row('clearsearch', 'trash', 'Clear search history', '') +
-      '<div class="grp">About</div>' + row('about', 'play', 'NovaPlay 2.0', 'Ad blocking on');
+      '<div class="grp">About</div>' + row('about', 'play', 'NovaPlay 2.0', 'Ad blocking on') + (N && N.mediaLog ? row('vlog', 'history', 'Video connection log', '', 'Shows what happened if a video won’t load') : '');
     done();
+  }
+  function videoLog() {
+    var t = ''; try { t = N && N.mediaLog ? N.mediaLog() : ''; } catch (e) {}
+    t = t || 'Nothing yet. Play a video, then open this again.';
+    sheet('Video connection log', [{ icon: 'share', label: 'Share log', fn: function () { if (N && N.share) N.share('NovaPlay video log\n' + t); else toast('Sharing isn’t available here'); } }], '<pre class="vlog">' + esc(t) + '</pre>');
   }
   function setting(id) {
     var s = D.set;
@@ -382,6 +388,7 @@
     else if (id === 'clearhist') { D.hist = []; D.pos = {}; save(); toast('Watch history cleared'); }
     else if (id === 'clearsearch') { D.searches = []; save(); toast('Search history cleared'); }
     else if (id === 'about') toast('NovaPlay 2.0 · ad blocking is on');
+    else if (id === 'vlog') videoLog();
   }
 
   /* ---------- downloads ---------- */
@@ -551,7 +558,7 @@
     if (S.cur && S.cur.id !== v.id) savePos();
     S.cur = v;
     if (!o.keepQueue) S.queue = [v]; else if (!S.queue.some(function (x) { return x.id === v.id; })) S.queue.push(v);
-    clearTimeout(upnT); $('#upn').classList.remove('on'); showErr(null); leaveEmbed(); triedLower = false;
+    clearTimeout(upnT); $('#upn').classList.remove('on'); showErr(null); leaveEmbed(); triedLower = false; S.stuck = 0;
     renderInfo(v); openWatch(); addHist(v); setBusy(true);
     $('#miT').textContent = v.title; $('#miS').textContent = v.tags[0] ? '#' + v.tags[0] : '';
     $('#ws').scrollTop = 0; vid.pause(); vid.removeAttribute('src'); vid.load(); paint(0); $('#sBuf').style.width = '0';
@@ -573,9 +580,13 @@
   }
   function startSrc(s) {
     if (!s) { setBusy(false); showErr('No playable stream was found.', true); return; }
-    S.curSrc = s; $('#perr').classList.remove('on'); setBusy(true);
+    S.curSrc = s; $('#perr').classList.remove('on'); setBusy(true); lastLoad = Date.now();
     if (N && N.allowMedia && /^https?:/.test(s.src)) N.allowMedia(s.src); /* the shell fetches this server's video with the site's headers */
-    vid.src = s.src; vid.load();
+    /* the shell's own video server hands the file to the player over plain HTTP, so seeking and buffering work like on any web page */
+    var local = ''; S.local = false;
+    if (N && N.proxyUrl && s.kind === 'mp4' && /^https?:/.test(s.src)) { try { local = N.proxyUrl(s.src) || ''; } catch (e) { local = ''; } }
+    if (local) { S.local = true; logv('play ' + s.label + ' through the local server'); }
+    vid.src = local || s.src; vid.load();
     var pl = vid.play(); if (pl && pl.catch) pl.catch(function () {});
   }
   function showErr(m, actions) {
@@ -634,6 +645,15 @@
   }
   function onVidError() {
     if (!S.cur || !vid.getAttribute('src')) return;
+    var er = vid.error;
+    if (S.local) { /* the local server didn't work out: let the player load the site's address itself (the shell still adds the site's headers) */
+      logv('local server failed (error ' + (er ? er.code : '?') + ' at ' + Math.round(vid.currentTime) + 's), using the direct address');
+      S.local = false; resumeAt = vid.currentTime || resumeAt;
+      vid.src = S.curSrc.src; vid.load();
+      var pl = vid.play(); if (pl && pl.catch) pl.catch(function () {});
+      return;
+    }
+    logv('video error ' + (er ? er.code : '?'));
     var cur = S.curSrc, lower = (S.src || []).filter(function (s) { return s.kind === 'mp4' && s.h < (cur ? cur.h : 99999); }).sort(function (a, b) { return b.h - a.h; });
     if (!triedLower && lower.length) { triedLower = true; resumeAt = vid.currentTime || resumeAt; toast('Switching to ' + lower[0].label); startSrc(lower[0]); return; }
     setBusy(false); showErr('This video couldn’t be loaded.', true);
@@ -658,6 +678,23 @@
     resumeAt = 0; vid.playbackRate = S.rate || 1; paint();
   });
   vid.addEventListener('ended', onEnded); vid.addEventListener('error', onVidError);
+  /* a video that stops loading (a request that never gets an answer) is reconnected from where it stopped, twice, before the error is shown */
+  ['progress', 'timeupdate', 'playing', 'seeked', 'loadeddata'].forEach(function (ev) { vid.addEventListener(ev, function () { lastLoad = Date.now(); }); });
+  setInterval(function () {
+    if (!S.cur || !S.curSrc || !vid.getAttribute('src') || P.classList.contains('emb') || document.hidden) return;
+    if (S.stuck && Date.now() - (S.stuckAt || 0) > 40000 && !vid.seeking && vid.readyState >= 3) S.stuck = 0;
+    if (!(vid.seeking || !vid.paused) || vid.readyState >= 3 || Date.now() - lastLoad < 12000) return;
+    if (S.local && vid.readyState === 0) { /* the local server never delivered a first byte: use the site's address itself */
+      logv('local server did not answer; using the direct address');
+      S.local = false; lastLoad = Date.now(); vid.src = S.curSrc.src; vid.load();
+      var pl = vid.play(); if (pl && pl.catch) pl.catch(function () {});
+      return;
+    }
+    S.stuck = (S.stuck || 0) + 1; S.stuckAt = lastLoad = Date.now();
+    if (S.stuck > 2) { logv('the video stopped loading; giving up'); setBusy(false); showErr('This video stopped loading.', true); return; }
+    logv('the video stopped loading at ' + Math.round(vid.currentTime) + 's; reconnecting (' + S.stuck + ')');
+    toast('Reconnecting…'); resumeAt = vid.currentTime || resumeAt; startSrc(S.curSrc);
+  }, 3000);
 
   /* gestures: tap = controls, double-tap = seek 10s, hold = 2x speed */
   (function () {

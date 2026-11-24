@@ -63,6 +63,8 @@ public class MainActivity extends Activity {
 
     private WebView web;
     private String ua = "";
+    /** Hands the video to the player over plain HTTP on 127.0.0.1 (see LocalMediaServer). */
+    private LocalMediaServer media;
     /** Hosts (besides the site's own) the page is about to play video from; filled by Bridge.allowMedia. */
     private final Set<String> mediaDomains = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private volatile boolean playing = false;
@@ -99,6 +101,7 @@ public class MainActivity extends Activity {
         s.setSupportZoom(false);
         s.setBuiltInZoomControls(false);
         ua = s.getUserAgentString();
+        media = new LocalMediaServer(ua, COOKIES);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
 
         web.addJavascriptInterface(new Bridge(), "NovaNative");
@@ -109,13 +112,19 @@ public class MainActivity extends Activity {
                 String scheme = u.getScheme();
                 if (!"http".equals(scheme) && !"https".equals(scheme)) return null;
                 String host = u.getHost();
+                // the app's own video server is an ordinary HTTP server to the network stack; leave it alone
+                if (LocalMediaServer.isLoopback(host)) return null;
                 if (AdBlock.isBlocked(host)) {
                     return new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream(new byte[0]));
                 }
-                // video files: the site's servers refuse a request without the site's Referer, so fetch it with one
+                // video files the page loads itself (when the local server is not used): the site's servers refuse a
+                // request without the site's Referer, so fetch it with one
                 if ("GET".equalsIgnoreCase(request.getMethod())
                         && MediaProxy.wants(host, u.getPath(), request.getRequestHeaders(), mediaDomains)) {
                     MediaProxy.Reply r = MediaProxy.fetch(u.toString(), request.getRequestHeaders(), ua, COOKIES);
+                    String range = request.getRequestHeaders() == null ? null : request.getRequestHeaders().get("Range");
+                    MediaLog.add("direct " + host + " " + (range == null ? "all" : range.replace("bytes=", ""))
+                            + (r == null ? ": no answer" : " -> " + r.status));
                     if (r != null) {
                         try {
                             return new WebResourceResponse(r.mime, null, r.status, r.reason, r.headers, r.body);
@@ -238,6 +247,10 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         stopService(new Intent(this, PlayService.class));
+        if (media != null) {
+            media.stop();
+            media = null;
+        }
         if (web != null) {
             web.removeAllViews();
             web.destroy();
@@ -335,6 +348,32 @@ public class MainActivity extends Activity {
             } catch (Exception ignored) {
                 // not a usable URL
             }
+        }
+
+        /**
+         * The address on the app's own video server that serves [url] to the player, or "" when that is not
+         * available (the player then loads [url] itself).
+         */
+        @JavascriptInterface
+        public String proxyUrl(String url) {
+            try {
+                LocalMediaServer m = media;
+                String u = m == null ? null : m.register(url);
+                return u == null ? "" : u;
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        /** What the video connection did lately, one line per event (Settings shows it). */
+        @JavascriptInterface
+        public String mediaLog() {
+            return MediaLog.dump();
+        }
+
+        @JavascriptInterface
+        public void logMedia(String line) {
+            MediaLog.add("page: " + line);
         }
 
         @JavascriptInterface

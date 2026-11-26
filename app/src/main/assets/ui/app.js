@@ -366,13 +366,28 @@
       tog('autoplay', 'next', 'Autoplay next video', s.autoplay) + tog('bg', 'headset', 'Keep playing in background', s.bg, 'Audio continues when you leave the app') + tog('pip', 'pip', 'Pop-out player when you leave', s.pip, 'Picture-in-picture while a video is playing') + tog('resume', 'history', 'Resume where you left off', s.resume) +
       '<div class="grp">Content</div>' + row('gay', 'tag', 'Show', ['Straight only', 'Everything', 'Gay only'][s.gay]) + tog('lq', 'quality', 'Include low-quality videos', !!s.lq) +
       '<div class="grp">Privacy</div>' + tog('hist', 'history', 'Pause watch history', !s.hist) + row('clearhist', 'trash', 'Clear watch history', '') + row('clearsearch', 'trash', 'Clear search history', '') +
-      '<div class="grp">About</div>' + row('about', 'play', 'NovaPlay 2.0', 'Ad blocking on') + (N && N.mediaLog ? row('vlog', 'history', 'Video connection log', '', 'Shows what happened if a video won’t load') : '');
+      '<div class="grp">About</div>' + row('about', 'play', 'NovaPlay 2.0', 'Ad blocking on') + (N && N.mediaLog ? row('vlog', 'history', 'Video connection log', '', 'Shows what happened if a video won’t load') : '') + (crashInfo() ? row('crash', 'history', 'Problem report', '', 'What went wrong the last time NovaPlay stopped') : '');
     done();
   }
   function videoLog() {
     var t = ''; try { t = N && N.mediaLog ? N.mediaLog() : ''; } catch (e) {}
     t = t || 'Nothing yet. Play a video, then open this again.';
-    sheet('Video connection log', [{ icon: 'share', label: 'Share log', fn: function () { if (N && N.share) N.share('NovaPlay video log\n' + t); else toast('Sharing isn’t available here'); } }], '<pre class="vlog">' + esc(t) + '</pre>');
+    sheet('Video connection log', [
+      { icon: 'share', label: 'Copy log', sub: 'Then paste it in the chat', keep: true, fn: function () { if (N && N.copy) { N.copy('NovaPlay video log\n' + t); toast('Log copied'); } else if (N && N.share) N.share('NovaPlay video log\n' + t); } },
+      { icon: 'share', label: 'Share log', fn: function () { if (N && N.share) N.share('NovaPlay video log\n' + t); else toast('Sharing isn’t available here'); } }
+    ], '<pre class="vlog">' + esc(t) + '</pre>');
+  }
+  /* what went wrong the last time the app stopped unexpectedly (the shell writes it down, see CrashLog.java) */
+  function crashInfo() { try { var r = N && N.crashReport ? N.crashReport() : ''; return r ? JSON.parse(r) : null; } catch (e) { return null; } }
+  function crashSheet(c) {
+    if (!c || !c.text) return;
+    if (c.fresh && N && N.crashSeen) N.crashSeen();
+    var t = c.text;
+    sheet(c.fresh ? 'NovaPlay had a problem' : 'Last problem report', [
+      { icon: 'share', label: 'Copy report', sub: 'Then paste it in the chat so it can be fixed', keep: true, fn: function () { if (N && N.copy) { N.copy(t); toast('Report copied'); } else if (N && N.share) N.share(t); } },
+      { icon: 'share', label: 'Share report', fn: function () { if (N && N.share) N.share(t); else toast('Sharing isn’t available here'); } },
+      { icon: 'trash', label: 'Delete report', fn: function () { if (N && N.crashClear) N.crashClear(); toast('Report deleted'); if (S.route.name === 'settings') render(); } }
+    ], '<pre class="vlog">' + esc(t) + '</pre>');
   }
   function setting(id) {
     var s = D.set;
@@ -389,6 +404,7 @@
     else if (id === 'clearsearch') { D.searches = []; save(); toast('Search history cleared'); }
     else if (id === 'about') toast('NovaPlay 2.0 · ad blocking is on');
     else if (id === 'vlog') videoLog();
+    else if (id === 'crash') crashSheet(crashInfo());
   }
 
   /* ---------- downloads ---------- */
@@ -857,5 +873,6 @@
     if (!D.set.adult) $('#gate').hidden = false;
     trending().then(function (t) { S.trend = t; if (S.chipsFn) drawChips(); }, function () {});
     window.addEventListener('hashchange', render); render();
+    setTimeout(function () { var c = crashInfo(); if (c && c.fresh) crashSheet(c); }, 700); /* the app stopped last time: show what happened */
   })();
 })();

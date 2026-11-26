@@ -44,13 +44,34 @@ final class MediaProxy {
         final String mime;
         final Map<String, String> headers;
         final InputStream body;
+        private final Runnable cutter;
 
         Reply(int status, String reason, String mime, Map<String, String> headers, InputStream body) {
+            this(status, reason, mime, headers, body, null);
+        }
+
+        Reply(int status, String reason, String mime, Map<String, String> headers, InputStream body, Runnable cutter) {
             this.status = status;
             this.reason = reason;
             this.mime = mime;
             this.headers = headers;
             this.body = body;
+            this.cutter = cutter;
+        }
+
+        /**
+         * Cuts the connection to the site's server from any thread. A thread that is reading {@link #body} at that
+         * moment fails with an IOException and closes the stream itself: the stream is never closed from here,
+         * because the HTTP stack's streams are not safe to close while another thread reads them.
+         */
+        void abort() {
+            Runnable c = cutter;
+            if (c == null) return;
+            try {
+                c.run();
+            } catch (RuntimeException ignored) {
+                // already cut
+            }
         }
     }
 
@@ -158,7 +179,14 @@ final class MediaProxy {
             h.put(k, sb.toString());
         }
         long aligned = code == 206 ? rangeStart(in) : 0;
-        return new Reply(code, reasonOf(code, c.getResponseMessage()), mimeOf(c.getContentType(), url), h, new Closing(raw, c, aligned));
+        final HttpURLConnection conn = c;
+        Runnable cutter = new Runnable() {
+            @Override
+            public void run() {
+                conn.disconnect();
+            }
+        };
+        return new Reply(code, reasonOf(code, c.getResponseMessage()), mimeOf(c.getContentType(), url), h, new Closing(raw, c, aligned), cutter);
     }
 
     /** Where a "Range: bytes=N-..." request starts (N), or 0 when there is no such range. */
@@ -213,12 +241,15 @@ final class MediaProxy {
         public void close() throws IOException {
             try {
                 conn.disconnect();
-            } finally {
-                try {
-                    super.close();
-                } catch (IOException ignored) {
-                    // already cut
-                }
+            } catch (RuntimeException ignored) {
+                // already cut
+            }
+            try {
+                super.close();
+            } catch (IOException ignored) {
+                // already cut
+            } catch (RuntimeException ignored) {
+                // the HTTP stack's streams can throw unchecked exceptions once the connection is cut
             }
         }
     }

@@ -10,8 +10,8 @@ android {
         applicationId 'app.novaplay.modern'
         minSdk 26
         targetSdk 34
-        versionCode 3
-        versionName '2.0.2'
+        versionCode 4
+        versionName '2.0.3'
     }
 
     // one fixed key, so every new build installs over the previous one

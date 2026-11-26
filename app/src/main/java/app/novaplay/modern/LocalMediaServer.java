@@ -67,9 +67,32 @@ final class LocalMediaServer {
     /** How long a player may take to send its request before the connection is dropped. */
     volatile int headTimeoutMs = 10000;
 
+    /** Where the site's answers come from. Tests put their own here; the app always uses {@link MediaProxy#fetch}. */
+    interface Fetcher {
+        MediaProxy.Reply fetch(String url, Map<String, String> headers);
+    }
+
+    volatile Fetcher fetcher;
+
     LocalMediaServer(String ua, MediaProxy.Cookies cookies) {
         this.ua = ua;
         this.cookies = cookies;
+    }
+
+    private MediaProxy.Reply fetch(String url, Map<String, String> headers) {
+        Fetcher f = fetcher;
+        return f != null ? f.fetch(url, headers) : MediaProxy.fetch(url, headers, ua, cookies);
+    }
+
+    /** What went wrong, without addresses: the exception's type and where it came from. */
+    static String describe(Throwable t) {
+        StringBuilder sb = new StringBuilder(t.getClass().getSimpleName());
+        StackTraceElement[] st = t.getStackTrace();
+        for (int i = 0; i < st.length && i < 2; i++) {
+            sb.append(i == 0 ? " at " : " < ").append(st[i].getClassName().replaceFirst("^.*\\.", ""))
+                    .append('.').append(st[i].getMethodName()).append(':').append(st[i].getLineNumber());
+        }
+        return sb.toString();
     }
 
     /** True for the server's own address: requests to it are the network stack's business, not the shell's. */
@@ -143,6 +166,13 @@ final class LocalMediaServer {
                 public Thread newThread(Runnable r) {
                     Thread t = new Thread(r, "nova-media-" + n.incrementAndGet());
                     t.setDaemon(true);
+                    // whatever slips through ends one request, never the app: the player simply asks again
+                    t.setUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+                        @Override
+                        public void uncaughtException(Thread th, Throwable e) {
+                            MediaLog.add("local server thread error: " + describe(e));
+                        }
+                    });
                     return t;
                 }
             });
@@ -152,7 +182,11 @@ final class LocalMediaServer {
             p.execute(new Runnable() {
                 @Override
                 public void run() {
-                    accept(s, p);
+                    try {
+                        accept(s, p);
+                    } catch (Throwable e) {
+                        MediaLog.add("local server accept error: " + describe(e));
+                    }
                 }
             });
             MediaLog.add("local video server ready on port " + port);
@@ -193,10 +227,18 @@ final class LocalMediaServer {
 
     /* ---------- one connection ---------- */
 
-    /** One player connection: the socket, the stream coming from the site's server, and whether the player left. */
+    /**
+     * One player connection: the socket, the answer coming from the site's server, and whether the player left.
+     *
+     * Two threads work on a connection: the one that serves it (reads the site's answer, writes it to the player)
+     * and a watcher that notices the player hanging up. The HTTP stack's streams must never be closed while another
+     * thread reads them (the platform's HTTP client says so itself: it throws unchecked exceptions from inside the
+     * read, and from the close). So the watcher only ever <em>cuts</em> the connections ({@link #cancel}); the
+     * serving thread alone releases the stream ({@link #close}).
+     */
     private static final class Conn {
         final Socket sock;
-        volatile InputStream upstream;
+        volatile MediaProxy.Reply upstream;
         volatile boolean cancelled;
         volatile boolean finished;
 
@@ -205,7 +247,7 @@ final class LocalMediaServer {
         }
 
         /**
-         * Waits for the player to close its end (it does when it seeks or leaves) and then cuts the stream from the
+         * Waits for the player to close its end (it does when it seeks or leaves) and then cuts the connection to the
          * site's server, so nothing keeps downloading a part of the file nobody is going to watch.
          */
         void watch(ExecutorService p) {
@@ -221,6 +263,8 @@ final class LocalMediaServer {
                             }
                         } catch (IOException ignored) {
                             // closed by either side
+                        } catch (Throwable e) {
+                            MediaLog.add("local server watcher error: " + describe(e));
                         }
                         if (!finished) cancel();
                     }
@@ -230,38 +274,56 @@ final class LocalMediaServer {
             }
         }
 
+        /** From any thread: stop the transfer. Cuts the connections; the serving thread notices and cleans up. */
         void cancel() {
             cancelled = true;
-            closeQuietly(upstream);
+            try {
+                MediaProxy.Reply r = upstream;
+                if (r != null) r.abort();
+            } catch (Throwable ignored) {
+                // nothing more can be done about a connection that is already gone
+            }
             closeQuietly(sock);
         }
 
+        /** Only from the thread that serves this connection: releases the site's stream, then the player's socket. */
         void close() {
             finished = true;
-            closeQuietly(upstream);
+            try {
+                MediaProxy.Reply r = upstream;
+                if (r != null) {
+                    r.abort();
+                    closeQuietly(r.body);
+                }
+            } catch (Throwable ignored) {
+                // the stream is released as far as it can be
+            }
             closeQuietly(sock);
         }
     }
 
     private void serve(Socket sock, ExecutorService p) {
         Conn conn = new Conn(sock);
-        synchronized (lock) {
-            if (stopped) {
-                conn.close();
-                return;
-            }
-            open.add(conn);
-        }
         try {
+            synchronized (lock) {
+                if (stopped) {
+                    conn.close();
+                    return;
+                }
+                open.add(conn);
+            }
             handle(conn, p);
         } catch (IOException ignored) {
             // the player went away or never sent a usable request
-        } catch (RuntimeException e) {
-            MediaLog.add("local server error: " + e.getClass().getSimpleName());
+        } catch (Throwable e) {
+            MediaLog.add("local server error: " + describe(e));
         } finally {
-            conn.close();
-            synchronized (lock) {
-                open.remove(conn);
+            try {
+                conn.close();
+            } finally {
+                synchronized (lock) {
+                    open.remove(conn);
+                }
             }
         }
     }
@@ -322,20 +384,16 @@ final class LocalMediaServer {
         String host = MediaLog.host(url);
         long t0 = System.currentTimeMillis();
         conn.watch(p);
-        MediaProxy.Reply r = MediaProxy.fetch(url, fwd, ua, cookies);
+        MediaProxy.Reply r = fetch(url, fwd);
+        if (r != null) conn.upstream = r; // from here on the watcher can cut it
         if (conn.cancelled) {
-            if (r != null) closeQuietly(r.body);
+            // the player left while the answer was on its way; Conn.close() releases the stream
             MediaLog.add("#" + id + " " + host + " " + rangeText + ": player moved on before the answer");
             return;
         }
         if (r == null) {
             MediaLog.add("#" + id + " " + host + " " + rangeText + ": no answer from the video server");
             reply(out, 502, "Bad Gateway", "The video server did not answer.", "");
-            return;
-        }
-        conn.upstream = r.body;
-        if (conn.cancelled) { // the player left while the stream was being handed over
-            closeQuietly(r.body);
             return;
         }
         String cr = header(r.headers, "Content-Range");
@@ -369,6 +427,10 @@ final class LocalMediaServer {
             try {
                 n = body.read(buf);
             } catch (IOException e) {
+                n = -1;
+                err = e.getClass().getSimpleName();
+            } catch (RuntimeException e) {
+                // the HTTP stack throws unchecked exceptions when its connection is cut under a read
                 n = -1;
                 err = e.getClass().getSimpleName();
             }
@@ -405,11 +467,11 @@ final class LocalMediaServer {
                 }
                 MediaProxy.Reply next = resume(url, pos, end);
                 if (next != null) {
-                    closeQuietly(body);
+                    InputStream old = body;
+                    conn.upstream = next; // the watcher cuts the new connection from now on...
+                    closeQuietly(old);    // ...and only this thread ever closes a stream
                     body = next.body;
-                    conn.upstream = body;
                     if (conn.cancelled) {
-                        closeQuietly(body);
                         why = "player moved on";
                         break;
                     }
@@ -433,10 +495,11 @@ final class LocalMediaServer {
     private MediaProxy.Reply resume(String url, long pos, long end) {
         Map<String, String> h = new HashMap<String, String>();
         h.put("Range", "bytes=" + pos + "-" + end);
-        MediaProxy.Reply next = MediaProxy.fetch(url, h, ua, cookies);
+        MediaProxy.Reply next = fetch(url, h);
         if (next == null) return null;
         long[] span = next.status == 206 ? contentRange(header(next.headers, "Content-Range")) : null;
         if (span == null || span[0] != pos) {
+            next.abort();
             closeQuietly(next.body);
             return null;
         }
@@ -601,11 +664,12 @@ final class LocalMediaServer {
         return "";
     }
 
+    /** Closes [c], whatever it throws: streams of the platform's HTTP client throw unchecked exceptions when cut. */
     private static void closeQuietly(Closeable c) {
         if (c == null) return;
         try {
             c.close();
-        } catch (IOException ignored) {
+        } catch (Exception ignored) {
             // already closed
         }
     }

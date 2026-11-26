@@ -4,6 +4,8 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.DownloadManager;
 import android.app.PictureInPictureParams;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ActivityInfo;
@@ -15,12 +17,14 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.SystemClock;
 import android.util.Rational;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -35,6 +39,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Locale;
 import java.util.Set;
@@ -61,12 +66,17 @@ public class MainActivity extends Activity {
         }
     };
 
+    private static final String PAGE = "file:///android_asset/ui/index.html";
+
+    private FrameLayout root;
     private WebView web;
     private String ua = "";
     /** Hands the video to the player over plain HTTP on 127.0.0.1 (see LocalMediaServer). */
     private LocalMediaServer media;
     /** Hosts (besides the site's own) the page is about to play video from; filled by Bridge.allowMedia. */
     private final Set<String> mediaDomains = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    /** When the page was last rebuilt after its process died (to give up if that keeps happening). */
+    private final ArrayList<Long> rebuilds = new ArrayList<Long>();
     private volatile boolean playing = false;
     private volatile boolean autoPip = true;
     private boolean foreground = false;
@@ -76,19 +86,32 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onCreate(Bundle state) {
+        CrashLog.install(this); // first of all: a crash from here on leaves a report the next start can show
         super.onCreate(state);
+        CrashLog.checkLastExit(this);
         AdBlock.init(getApplicationContext());
 
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         root.setBackgroundColor(BG_DARK);
-        web = new WebView(this);
-        web.setBackgroundColor(BG_DARK);
-        root.addView(web, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         setContentView(root);
         applyBars();
 
-        WebSettings s = web.getSettings();
+        web = createWebView();
+        root.addView(web, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        media = new LocalMediaServer(ua, COOKIES);
+        web.loadUrl(PAGE);
+
+        if (Build.VERSION.SDK_INT >= 33) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
+        }
+    }
+
+    /** A WebView set up for the app's page (made again when the page's process dies, see recoverFromRenderGone). */
+    private WebView createWebView() {
+        WebView w = new WebView(this);
+        w.setBackgroundColor(barsBg);
+        WebSettings s = w.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
         s.setMediaPlaybackRequiresUserGesture(false);
@@ -100,44 +123,20 @@ public class MainActivity extends Activity {
         s.setJavaScriptCanOpenWindowsAutomatically(false);
         s.setSupportZoom(false);
         s.setBuiltInZoomControls(false);
-        ua = s.getUserAgentString();
-        media = new LocalMediaServer(ua, COOKIES);
-        CookieManager.getInstance().setAcceptThirdPartyCookies(web, true);
+        if (ua.isEmpty()) ua = s.getUserAgentString();
+        CookieManager.getInstance().setAcceptThirdPartyCookies(w, true);
 
-        web.addJavascriptInterface(new Bridge(), "NovaNative");
-        web.setWebViewClient(new WebViewClient() {
+        w.addJavascriptInterface(new Bridge(), "NovaNative");
+        w.setWebViewClient(new WebViewClient() {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                Uri u = request.getUrl();
-                String scheme = u.getScheme();
-                if (!"http".equals(scheme) && !"https".equals(scheme)) return null;
-                String host = u.getHost();
-                // the app's own video server is an ordinary HTTP server to the network stack; leave it alone
-                if (LocalMediaServer.isLoopback(host)) return null;
-                if (AdBlock.isBlocked(host)) {
-                    return new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream(new byte[0]));
+                try {
+                    return intercept(request);
+                } catch (RuntimeException e) {
+                    // a request must never take the app down: the WebView then makes it itself
+                    MediaLog.add("request filter error: " + LocalMediaServer.describe(e));
+                    return null;
                 }
-                // video files the page loads itself (when the local server is not used): the site's servers refuse a
-                // request without the site's Referer, so fetch it with one
-                if ("GET".equalsIgnoreCase(request.getMethod())
-                        && MediaProxy.wants(host, u.getPath(), request.getRequestHeaders(), mediaDomains)) {
-                    MediaProxy.Reply r = MediaProxy.fetch(u.toString(), request.getRequestHeaders(), ua, COOKIES);
-                    String range = request.getRequestHeaders() == null ? null : request.getRequestHeaders().get("Range");
-                    MediaLog.add("direct " + host + " " + (range == null ? "all" : range.replace("bytes=", ""))
-                            + (r == null ? ": no answer" : " -> " + r.status));
-                    if (r != null) {
-                        try {
-                            return new WebResourceResponse(r.mime, null, r.status, r.reason, r.headers, r.body);
-                        } catch (IllegalArgumentException e) {
-                            try {
-                                r.body.close();
-                            } catch (Exception ignored) {
-                                // nothing left to close
-                            }
-                        }
-                    }
-                }
-                return null;
             }
 
             @Override
@@ -146,18 +145,89 @@ public class MainActivity extends Activity {
                 // the app page never navigates away; block redirects and pop-unders
                 return !"file".equals(request.getUrl().getScheme());
             }
+
+            @Override
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                recoverFromRenderGone(view, detail != null && detail.didCrash());
+                return true; // handled: the app stays up
+            }
         });
-        web.setWebChromeClient(new WebChromeClient() {
+        w.setWebChromeClient(new WebChromeClient() {
             @Override
             public Bitmap getDefaultVideoPoster() {
                 return Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
             }
         });
-        web.loadUrl("file:///android_asset/ui/index.html");
+        return w;
+    }
 
-        if (Build.VERSION.SDK_INT >= 33) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
+    /** Ad blocking, and the site's video files fetched with the site's headers (see MediaProxy). */
+    private WebResourceResponse intercept(WebResourceRequest request) {
+        Uri u = request.getUrl();
+        String scheme = u.getScheme();
+        if (!"http".equals(scheme) && !"https".equals(scheme)) return null;
+        String host = u.getHost();
+        // the app's own video server is an ordinary HTTP server to the network stack; leave it alone
+        if (LocalMediaServer.isLoopback(host)) return null;
+        if (AdBlock.isBlocked(host)) {
+            return new WebResourceResponse("text/plain", "utf-8", new ByteArrayInputStream(new byte[0]));
         }
+        // video files the page loads itself (when the local server is not used): the site's servers refuse a
+        // request without the site's Referer, so fetch it with one
+        if ("GET".equalsIgnoreCase(request.getMethod())
+                && MediaProxy.wants(host, u.getPath(), request.getRequestHeaders(), mediaDomains)) {
+            MediaProxy.Reply r = MediaProxy.fetch(u.toString(), request.getRequestHeaders(), ua, COOKIES);
+            String range = request.getRequestHeaders() == null ? null : request.getRequestHeaders().get("Range");
+            MediaLog.add("direct " + host + " " + (range == null ? "all" : range.replace("bytes=", ""))
+                    + (r == null ? ": no answer" : " -> " + r.status));
+            if (r != null) {
+                try {
+                    return new WebResourceResponse(r.mime, null, r.status, r.reason, r.headers, r.body);
+                } catch (IllegalArgumentException e) {
+                    try {
+                        r.body.close();
+                    } catch (Exception ignored) {
+                        // nothing left to close
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The page's process died: it crashed, or the system took it back for memory. Left alone that takes the whole app
+     * down with it ("NovaPlay has stopped"); instead the page is built again and reloaded, and a crash is written down
+     * for the report sheet.
+     */
+    private void recoverFromRenderGone(WebView dead, boolean crashed) {
+        if (dead != web) return; // a view that was already replaced
+        // the system taking a backgrounded page back for memory is routine and worth no report
+        if (crashed || foreground) {
+            CrashLog.record(crashed ? "The page's rendering process crashed"
+                    : "The system stopped the page's process (memory) while the app was open", null);
+        }
+        MediaLog.add("page process " + (crashed ? "crashed" : "was stopped by the system") + "; loading it again");
+        playing = false;
+        stopService(new Intent(this, PlayService.class));
+        long now = SystemClock.elapsedRealtime();
+        rebuilds.add(now);
+        while (!rebuilds.isEmpty() && now - rebuilds.get(0) > 60000L) rebuilds.remove(0);
+        root.removeView(dead);
+        web = null;
+        try {
+            dead.destroy();
+        } catch (RuntimeException ignored) {
+            // already gone
+        }
+        if (rebuilds.size() > 3) { // it dies as soon as it loads: stop here instead of looping
+            Toast.makeText(this, "NovaPlay's page keeps crashing. Close the app and open it again.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        web = createWebView();
+        root.addView(web, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+        web.loadUrl(PAGE);
     }
 
     /* ---------- system bars / fullscreen ---------- */
@@ -386,15 +456,63 @@ public class MainActivity extends Activity {
             });
         }
 
+        /**
+         * The last problem report as {"text": "...", "fresh": true|false} ("fresh": not shown to the person yet), or
+         * "" when there is none.
+         */
+        @JavascriptInterface
+        public String crashReport() {
+            try {
+                String t = CrashLog.read();
+                if (t == null || t.isEmpty()) return "";
+                JSONObject o = new JSONObject();
+                o.put("text", t);
+                o.put("fresh", CrashLog.fresh());
+                return o.toString();
+            } catch (Exception e) {
+                return "";
+            }
+        }
+
+        /** The report was shown: stop announcing it at start (it stays available in Settings). */
+        @JavascriptInterface
+        public void crashSeen() {
+            CrashLog.markSeen();
+        }
+
+        @JavascriptInterface
+        public void crashClear() {
+            CrashLog.clear();
+        }
+
+        @JavascriptInterface
+        public void copy(final String text) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                        if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("NovaPlay", text == null ? "" : text));
+                    } catch (RuntimeException ignored) {
+                        // the clipboard is not available
+                    }
+                }
+            });
+        }
+
         @JavascriptInterface
         public void share(final String text) {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    Intent i = new Intent(Intent.ACTION_SEND);
-                    i.setType("text/plain");
-                    i.putExtra(Intent.EXTRA_TEXT, text);
-                    startActivity(Intent.createChooser(i, null));
+                    try {
+                        Intent i = new Intent(Intent.ACTION_SEND);
+                        i.setType("text/plain");
+                        i.putExtra(Intent.EXTRA_TEXT, text);
+                        startActivity(Intent.createChooser(i, null));
+                    } catch (RuntimeException e) {
+                        Toast.makeText(MainActivity.this, "Sharing isn’t available", Toast.LENGTH_SHORT).show();
+                    }
                 }
             });
         }

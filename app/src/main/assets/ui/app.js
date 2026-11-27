@@ -169,7 +169,7 @@
   }
 
   /* ---------- state ---------- */
-  var S = { tk: 0, ptk: 0, rk: null, route: { name: 'home', q: {}, key: '' }, stack: [], scroll: {}, restore: false, queue: [], cur: null, curSrc: null, src: [], rel: [], trend: null, chipsFn: null, dlTimer: 0, dlSig: '', rate: 1 };
+  var S = { tk: 0, ptk: 0, rk: null, route: { name: 'home', q: {}, key: '' }, stack: [], scroll: {}, depth: {}, more: null, restore: false, queue: [], cur: null, curSrc: null, src: [], rel: [], trend: null, chipsFn: null, dlTimer: 0, dlSig: '', rate: 1 };
   var view = $('#view');
   var W = $('#watch'), P = $('#player'), vid = $('#vid');
   var lastSave = 0, uiT = 0, resumeAt = 0, triedLower = false, upnT = 0, toastT = 0, sheetRows = null, lastLoad = 0;
@@ -274,7 +274,7 @@
   function render() {
     var r = parse();
     if (S.rk != null && S.rk !== r.key) S.scroll[S.rk] = window.pageYOffset;
-    S.rk = r.key; S.route = r; var tk = ++S.tk;
+    S.rk = r.key; S.route = r; S.more = null; var tk = ++S.tk;
     stopDl(); setNav(r.name); $('#hdr').classList.remove('hide'); S.chipsFn = null; drawChips();
     var map = { home: pageHome, explore: pageExplore, following: pageFollowing, downloads: pageDownloads, you: pageYou, search: pageSearch, tag: pageTag, history: pageHistory, watchlater: pageSaved, liked: pageSaved, settings: pageSettings };
     window.scrollTo(0, 0);
@@ -282,14 +282,68 @@
   }
 
   /* ---------- pages ---------- */
-  function listPage(tk, loader, head) {
-    var h = function (res) { return head ? head(res) : ''; };
+  /* A list of videos. The first page is drawn at once; the next ones are added below by themselves while you scroll, and
+     the page numbers stay under the list. loader(n) gives page n as {videos, page, pages}. */
+  var AUTO_PAGES = 8; /* pages added by scrolling alone; after that a button asks first, so a very long list stays light */
+  function listPage(tk, loader, head, first, none) {
+    var h = function (res) { return head ? head(res) : ''; }, key = S.rk, back = S.restore ? Math.min(S.depth[key] || 0, 12) : 0; /* (a very deep list comes back 12 pages deep at most) */
     view.innerHTML = h(null) + skel();
-    return loader().then(function (res) {
+    return loader(first || 1).then(function (res) {
       if (tk !== S.tk) return;
-      view.innerHTML = h(res) + (res.videos.length ? '<div class="feed">' + res.videos.map(card).join('') + '</div>' + pager(res.page, res.pages) : empty('search', 'No videos found', 'Try a different search or sort.'));
-      done();
+      if (!res.videos.length) { view.innerHTML = h(res) + (none || empty('search', 'No videos found', 'Try a different search or sort.')); done(); return; }
+      var seen = {}; res.videos.forEach(function (v) { seen[v.id] = 1; });
+      view.innerHTML = h(res) + '<div class="feed">' + res.videos.map(card).join('') + '</div><div id="more"></div><div id="pagerbox">' + pager(res.page, res.pages) + '</div>';
+      var m = S.more = { tk: tk, key: key, loader: loader, page: res.page, pages: res.pages, busy: false, failed: false, auto: 0, seen: seen };
+      S.depth[key] = res.page;
+      moreBar(m);
+      function finish() { if (tk !== S.tk) return; m.auto = 0; done(); autoMore(); }
+      if (back > res.page) { /* coming back to a list that had been scrolled through: bring its pages back first, then the position */
+        (function again() {
+          if (tk !== S.tk) return;
+          if (m.page < back && m.page < m.pages) loadMore().then(function (ok) { if (ok) again(); else finish(); });
+          else finish();
+        })();
+      } else { done(); autoMore(); }
     }, function (e) { if (tk === S.tk) errView(e); });
+  }
+  function moreBar(m) {
+    var el = $('#more'); if (!el || !m) return;
+    if (m.busy) el.innerHTML = '<i class="ld" role="status" aria-label="Loading more videos"></i>';
+    else if (m.failed) el.innerHTML = '<button class="btn ghost" data-act="more">Couldn’t load more. Tap to retry</button>';
+    else if (m.page < m.pages && m.auto >= AUTO_PAGES) el.innerHTML = '<button class="btn ghost" data-act="more">Load more videos</button>';
+    else el.innerHTML = '';
+  }
+  /* adds the next page under the list; gives true when it did */
+  function loadMore() {
+    var m = S.more;
+    if (!m || m.busy || m.tk !== S.tk || m.page >= m.pages) return Promise.resolve(false);
+    var want = m.page + 1;
+    m.busy = true; m.failed = false; moreBar(m);
+    return m.loader(want).then(function (res) {
+      m.busy = false;
+      if (S.more !== m || m.tk !== S.tk) return false;
+      if (!res.videos.length || (res.page && res.page < want)) { m.pages = m.page; moreBar(m); var e1 = $('#pagerbox'); if (e1) e1.innerHTML = pager(m.page, m.pages); return false; } /* nothing more here: that was the end */
+      var fresh = res.videos.filter(function (v) { if (m.seen[v.id]) return false; m.seen[v.id] = 1; return true; });
+      var feed = $('#view .feed');
+      if (feed && fresh.length) feed.insertAdjacentHTML('beforeend', fresh.map(card).join(''));
+      m.page = want; if (res.pages) m.pages = res.pages;
+      S.depth[m.key] = m.page;
+      var pg = $('#pagerbox'); if (pg) pg.innerHTML = pager(m.page, m.pages);
+      moreBar(m);
+      return true;
+    }, function () {
+      m.busy = false;
+      if (S.more !== m || m.tk !== S.tk) return false;
+      m.failed = true; moreBar(m); return false;
+    });
+  }
+  function nearEnd() { var el = $('#more'); return !!el && el.getBoundingClientRect().top < window.innerHeight + 900; }
+  /* adds the next page when the end of the list is near; called while scrolling and after each page */
+  function autoMore() {
+    var m = S.more;
+    if (!m || m.busy || m.failed || m.tk !== S.tk || m.page >= m.pages || m.auto >= AUTO_PAGES || !nearEnd()) return;
+    m.auto++;
+    loadMore().then(function (ok) { if (ok) setTimeout(autoMore, 80); });
   }
   function pageHome(r, tk) {
     var t = r.q.t || '', c = t ? '' : (r.q.c || 'latest'), page = +r.q.p || 1;
@@ -300,18 +354,18 @@
       tr.slice(0, 14).forEach(function (x) { a.push({ label: x.tag, go: 'home?t=' + encodeURIComponent(x.tag), on: low === x.tag.toLowerCase() }); });
       return a;
     });
-    listPage(tk, function () { return t ? list({ q: t, order: 'most-popular', page: page }) : list({ order: c, page: page }); });
+    listPage(tk, function (n) { return t ? list({ q: t, order: 'most-popular', page: n }) : list({ order: c, page: n }); }, null, page);
   }
   function pageSearch(r, tk) {
     var q = r.q.q || '', o = r.q.o || 'most-popular', page = +r.q.p || 1;
     if (!q) { view.innerHTML = empty('search', 'Search videos', 'Type a word or tap a tag to find videos.'); openSearch(''); return; }
     setChips(function () { return ORD.map(function (x) { return { label: x[1], go: 'search?q=' + encodeURIComponent(q) + '&o=' + x[0], on: o === x[0] }; }); });
-    listPage(tk, function () { return list({ q: q, order: o, page: page }); }, function (res) { return '<div class="h2">' + (res ? fmtN(res.total) + ' results for “' + esc(q) + '”' : 'Searching…') + '</div>'; });
+    listPage(tk, function (n) { return list({ q: q, order: o, page: n }); }, function (res) { return '<div class="h2">' + (res ? fmtN(res.total) + ' results for “' + esc(q) + '”' : 'Searching…') + '</div>'; }, page);
   }
   function pageTag(r, tk) {
     var t = r.arg, o = r.q.o || 'most-popular', page = +r.q.p || 1;
     setChips(function () { return ORD.map(function (x) { return { label: x[1], go: 'tag/' + encodeURIComponent(t) + '?o=' + x[0], on: o === x[0] }; }); });
-    listPage(tk, function () { return list({ q: t, order: o, page: page }); }, function (res) { return tagHead(t, res ? res.total : 0); });
+    listPage(tk, function (n) { return list({ q: t, order: o, page: n }); }, function (res) { return tagHead(t, res ? res.total : 0); }, page);
   }
   function pageExplore(r, tk) {
     view.innerHTML = skel(2);
@@ -326,16 +380,17 @@
     if (!f.length) { view.innerHTML = empty('subs', 'Follow tags you like', 'Open a video and tap Follow on its tag to see new videos from it here.', 'Explore tags', 'explore'); return; }
     var act = r.q.t || '', low = act.toLowerCase();
     setChips(function () { var a = [{ label: 'All', go: 'following', on: !act }]; f.forEach(function (t) { a.push({ label: t, go: 'following?t=' + encodeURIComponent(t), on: low === t.toLowerCase() }); }); return a; });
-    view.innerHTML = skel();
-    var tags = act ? [act] : f.slice(0, 8), page = act ? (+r.q.p || 1) : 1;
-    Promise.all(tags.map(function (t) { return list({ q: t, order: 'latest', per: act ? PER : 10, page: page }).catch(function () { return { videos: [], page: 1, pages: 1 }; }); })).then(function (rs) {
-      if (tk !== S.tk) return;
-      var seen = {}, all = [];
-      rs.forEach(function (x) { x.videos.forEach(function (v) { if (!seen[v.id]) { seen[v.id] = 1; all.push(v); } }); });
-      all.sort(function (a, b) { return a.added < b.added ? 1 : -1; });
-      view.innerHTML = all.length ? '<div class="feed">' + all.map(card).join('') + '</div>' + (act ? pager(rs[0].page, rs[0].pages) : '') : empty('subs', 'No videos yet', 'Nothing new from these tags right now.');
-      done();
-    });
+    var tags = act ? [act] : f.slice(0, 8), per = act ? PER : 10;
+    /* page n of every followed tag, merged newest first */
+    function loader(n) {
+      return Promise.all(tags.map(function (t) { return list({ q: t, order: 'latest', per: per, page: n }).catch(function () { return { videos: [], page: n, pages: 1 }; }); })).then(function (rs) {
+        var seen = {}, all = [], pages = 1;
+        rs.forEach(function (x) { pages = Math.max(pages, x.pages || 1); x.videos.forEach(function (v) { if (!seen[v.id]) { seen[v.id] = 1; all.push(v); } }); });
+        all.sort(function (a, b) { return a.added < b.added ? 1 : -1; });
+        return { videos: all, page: n, pages: pages };
+      });
+    }
+    listPage(tk, loader, null, +r.q.p || 1, empty('subs', 'No videos yet', 'Nothing new from these tags right now.'));
   }
   function pageYou(r, tk) {
     var h = D.hist.slice(0, 12), l = D.later.slice(0, 12), k = D.liked.slice(0, 12);
@@ -786,6 +841,7 @@
   function act(a) {
     var v = S.cur;
     if (a === 'retry') render();
+    else if (a === 'more') { var m = S.more; if (m) { m.auto = 0; m.failed = false; loadMore().then(function (ok) { if (ok) autoMore(); }); } }
     else if (a === 'like' && v) toggleList('liked', v);
     else if (a === 'later' && v) toggleList('later', v);
     else if (a === 'share' && v) share(v);
@@ -847,7 +903,7 @@
     var lastY = 0, tick = false, h = $('#hdr');
     window.addEventListener('scroll', function () {
       if (tick) return; tick = true;
-      requestAnimationFrame(function () { var y = window.pageYOffset; if (y > lastY + 6 && y > 80) h.classList.add('hide'); else if (y < lastY - 6 || y < 40) h.classList.remove('hide'); lastY = y; tick = false; });
+      requestAnimationFrame(function () { var y = window.pageYOffset; if (y > lastY + 6 && y > 80) h.classList.add('hide'); else if (y < lastY - 6 || y < 40) h.classList.remove('hide'); lastY = y; tick = false; autoMore(); });
     }, { passive: true });
   })();
 

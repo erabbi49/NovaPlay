@@ -58,6 +58,9 @@ body.hasmini #view{padding-bottom:calc(var(--nav) + var(--mh) + 24px)}
 .pager a{min-width:40px;height:40px;padding:0 10px;display:grid;place-items:center;border-radius:20px;background:var(--chip);font-weight:500}
 .pager a.on{background:var(--chipon);color:var(--chipt)}
 .pager a.gap{background:none}
+#more{min-height:2px;text-align:center}
+#more .ld{display:block;width:28px;height:28px;margin:14px auto 22px;border-radius:50%;border:3px solid var(--ln);border-top-color:var(--tx2);animation:rot .8s linear infinite}
+#more .btn{display:block;margin:10px auto 18px}
 .empty{display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px;padding:72px 32px;color:var(--tx2)}
 .empty .ic{width:56px;height:56px;margin-bottom:8px}
 .empty h3{font-size:18px;line-height:24px;color:var(--tx);font-weight:500}

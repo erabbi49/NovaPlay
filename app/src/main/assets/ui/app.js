@@ -47,7 +47,8 @@
     speed: 'M20.38 8.57l-1.23 1.85a8 8 0 0 1-.22 7.58H5.07A8 8 0 0 1 15.58 6.85l1.85-1.23A10 10 0 0 0 3.35 19a2 2 0 0 0 1.72 1h13.85a2 2 0 0 0 1.74-1 10 10 0 0 0-.27-10.44zm-9.79 6.84a2 2 0 0 0 2.83 0l5.66-8.49-8.49 5.66a2 2 0 0 0 0 2.83z',
     quality: 'M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z',
     refresh: 'M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z',
-    trend: 'M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z'
+    trend: 'M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z',
+    shield: 'M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-1.06 14.54L7.4 12l1.41-1.41 2.12 2.12 4.24-4.24 1.41 1.41-5.64 5.66z'
   };
   function ic(n, c) { return '<svg class="ic' + (c ? ' ' + c : '') + '" viewBox="0 0 24 24" aria-hidden="true"><path d="' + (IC[n] || '') + '"/></svg>'; }
 
@@ -169,7 +170,7 @@
   }
 
   /* ---------- state ---------- */
-  var S = { tk: 0, ptk: 0, rk: null, route: { name: 'home', q: {}, key: '' }, stack: [], scroll: {}, depth: {}, more: null, restore: false, queue: [], cur: null, curSrc: null, src: [], rel: [], trend: null, chipsFn: null, dlTimer: 0, dlSig: '', rate: 1 };
+  var S = { tk: 0, ptk: 0, rk: null, route: { name: 'home', q: {}, key: '' }, stack: [], scroll: {}, depth: {}, more: null, err: false, errE: null, perr: null, warp: '', restore: false, queue: [], cur: null, curSrc: null, src: [], rel: [], trend: null, chipsFn: null, dlTimer: 0, dlSig: '', rate: 1 };
   var view = $('#view');
   var W = $('#watch'), P = $('#player'), vid = $('#vid');
   var lastSave = 0, uiT = 0, resumeAt = 0, triedLower = false, upnT = 0, toastT = 0, sheetRows = null, lastLoad = 0;
@@ -194,7 +195,12 @@
   }
   function pick(title, opts, cur, fn) { sheet(title, opts.map(function (o) { return { label: o[1], check: o[0] === cur, on: o[0] === cur, fn: function () { fn(o[0]); } }; })); }
   function empty(icon, title, text, btn, goto) { return '<div class="empty">' + ic(icon) + '<h3>' + esc(title) + '</h3><p>' + esc(text || '') + '</p>' + (btn ? '<button class="btn" data-go="' + esc(goto) + '" data-root="1">' + esc(btn) + '</button>' : '') + '</div>'; }
-  function errView(e) { view.innerHTML = '<div class="empty">' + ic('refresh') + '<h3>Can’t load videos</h3><p>' + esc((e && e.message) || 'Check your connection and try again.') + '</p><button class="btn" data-act="retry">Try again</button></div>'; }
+  function errView(e) {
+    S.err = true; S.errE = e;
+    var w = warpInfo(), wait = w && (w.state === 'connecting' || w.state === 'registering'); /* (waiting for the VPN question is not "connecting": the person has to tap) */
+    view.innerHTML = '<div class="empty">' + ic('refresh') + '<h3>Can’t load videos</h3><p>' + esc((e && e.message) || 'Check your connection and try again.') + '</p><button class="btn" data-act="retry">Try again</button>' +
+      (wait ? '<p>WARP is connecting. The videos load when it is on.</p>' : warpOffer() ? '<p>Not loading on your Wi‑Fi? Your internet provider may be blocking the site.</p><button class="btn ghost" data-act="warpon">' + ic('shield') + 'Turn on WARP (1.1.1.1)</button>' : '') + '</div>';
+  }
   function skel(n) { var a = ''; for (var i = 0; i < (n || 4); i++) a += '<div class="card sk"><div class="th"></div><div class="cm"><i class="av"></i><div class="tx"><b></b><b class="s"></b></div></div></div>'; return '<div class="feed">' + a + '</div>'; }
   function done() { if (S.restore) { S.restore = false; window.scrollTo(0, S.scroll[S.rk] || 0); } }
 
@@ -274,7 +280,7 @@
   function render() {
     var r = parse();
     if (S.rk != null && S.rk !== r.key) S.scroll[S.rk] = window.pageYOffset;
-    S.rk = r.key; S.route = r; S.more = null; var tk = ++S.tk;
+    S.rk = r.key; S.route = r; S.more = null; S.err = false; var tk = ++S.tk;
     stopDl(); setNav(r.name); $('#hdr').classList.remove('hide'); S.chipsFn = null; drawChips();
     var map = { home: pageHome, explore: pageExplore, following: pageFollowing, downloads: pageDownloads, you: pageYou, search: pageSearch, tag: pageTag, history: pageHistory, watchlater: pageSaved, liked: pageSaved, settings: pageSettings };
     window.scrollTo(0, 0);
@@ -415,7 +421,9 @@
     var s = D.set;
     function row(id, icon, label, val, sub) { return '<button class="row" data-set="' + id + '">' + ic(icon) + '<span class="rt">' + label + (sub ? '<small>' + sub + '</small>' : '') + '</span><span class="rv">' + (val == null ? '' : val) + '</span></button>'; }
     function tog(id, icon, label, on, sub) { return '<button class="row" data-set="' + id + '">' + ic(icon) + '<span class="rt">' + label + (sub ? '<small>' + sub + '</small>' : '') + '</span><i class="sw' + (on ? ' on' : '') + '"></i></button>'; }
+    var wr = N && N.warpState ? warpRows() : '';
     view.innerHTML = '<div class="h2">Settings</div>' +
+      (wr ? '<div class="grp">Connection</div><div id="warpRows">' + wr + '</div>' : '') +
       '<div class="grp">Appearance</div>' + row('theme', 'ambient', 'Theme', { dark: 'Dark', black: 'Black', light: 'Light' }[s.theme]) +
       '<div class="grp">Player</div>' + row('ambient', 'ambient', 'Ambient mode', ['Off', 'Subtle', 'Strong'][s.ambient]) + row('quality', 'quality', 'Default quality', s.quality === 'best' ? 'Best' : s.quality + 'p') +
       tog('autoplay', 'next', 'Autoplay next video', s.autoplay) + tog('bg', 'headset', 'Keep playing in background', s.bg, 'Audio continues when you leave the app') + tog('pip', 'pip', 'Pop-out player when you leave', s.pip, 'Picture-in-picture while a video is playing') + tog('resume', 'history', 'Resume where you left off', s.resume) +
@@ -444,6 +452,53 @@
       { icon: 'trash', label: 'Delete report', fn: function () { if (N && N.crashClear) N.crashClear(); toast('Report deleted'); if (S.route.name === 'settings') render(); } }
     ], '<pre class="vlog">' + esc(t) + '</pre>');
   }
+  /* Built-in Cloudflare WARP (what the 1.1.1.1 app does); the shell does the work, see WarpController.java */
+  function warpInfo() { try { var r = N && N.warpState ? N.warpState() : ''; return r ? JSON.parse(r) : null; } catch (e) { return null; } }
+  function warpOffer() { var w = warpInfo(); return !!w && w.state !== 'on' && w.state !== 'connecting' && w.state !== 'registering'; }
+  var WARP_TXT = { off: 'Off', registering: 'Registering with Cloudflare…', connecting: 'Connecting…', permission: 'Waiting for your OK', on: 'Connected', error: 'Couldn’t connect' };
+  function warpSub(w) {
+    if (!w) return '';
+    if (w.state === 'off') return w.msg || 'Like the 1.1.1.1 app. Helps when videos won’t load on your Wi‑Fi';
+    return w.msg || WARP_TXT[w.state] || '';
+  }
+  function warpRows() {
+    var w = warpInfo(); if (!w) return '';
+    return '<button class="row" data-set="warp">' + ic('shield') + '<span class="rt">Cloudflare WARP (1.1.1.1)<small>' + esc(warpSub(w)) + '</small></span><i class="sw' + (w.wanted ? ' on' : '') + '"></i></button>' +
+      '<button class="row" data-set="warpmore">' + ic('history') + '<span class="rt">WARP details<small>Log, whole-phone mode, reset</small></span><span class="rv">' + esc(WARP_TXT[w.state] || '') + '</span></button>';
+  }
+  function warpSheet() {
+    var w = warpInfo(); if (!w) return;
+    var log = ''; try { log = N.warpLog ? N.warpLog() : ''; } catch (e) {}
+    log = log || 'Nothing yet. Turn WARP on, then open this again.';
+    var text = 'NovaPlay WARP log\nstate: ' + w.state + (w.msg ? ' (' + w.msg + ')' : '') + '\nmode: ' + (w.all ? 'whole phone' : 'NovaPlay only') + (w.port ? '\nport: ' + w.port : '') + '\n\n' + log;
+    sheet('Cloudflare WARP', [
+      { icon: 'refresh', label: w.state === 'on' ? 'Reconnect' : 'Turn on / try again', fn: function () { if (N && N.warpRetry) { N.warpRetry(); toast('Connecting WARP…'); } else if (N && N.warpSet) { N.warpSet(true); toast('Connecting WARP…'); } } },
+      { icon: 'shield', label: 'Cover the whole phone', sub: w.all ? 'On: other apps and downloads use WARP too (like the 1.1.1.1 app)' : 'Off: only NovaPlay uses WARP. Turn on if downloads fail', toggle: !!w.all, fn: function () { if (N && N.warpAll) { N.warpAll(!w.all); toast(w.all ? 'WARP now covers only NovaPlay' : 'WARP now covers the whole phone'); } } },
+      { icon: 'share', label: 'Copy log', sub: 'Then paste it in the chat', keep: true, fn: function () { if (N && N.copy) { N.copy(text); toast('Log copied'); } else if (N && N.share) N.share(text); } },
+      { icon: 'share', label: 'Share log', fn: function () { if (N && N.share) N.share(text); else toast('Sharing isn’t available here'); } },
+      { icon: 'trash', label: 'Reset WARP account', sub: 'This phone registers with Cloudflare again next time', fn: function () { if (N && N.warpForget) { N.warpForget(); toast('WARP account reset'); } } }
+    ], '<pre class="vlog">' + esc(text) + '</pre>');
+  }
+  function warpOn() { if (N && N.warpSet) { N.warpSet(true); toast('Turning WARP on…'); } }
+  /* the shell tells the page whenever the WARP state changes */
+  window.__onWarp = function (st) {
+    if (!st) return;
+    var prev = S.warp; S.warp = st.state;
+    var box = $('#warpRows'); if (box && S.route.name === 'settings') box.innerHTML = warpRows();
+    if (st.state === prev) return;
+    var pe = $('#perr'), perr = pe && pe.classList.contains('on') && S.perr;
+    if (st.state === 'on') {
+      toast('WARP connected');
+      if (perr && S.cur) act('reload'); /* a video that could not be loaded: load it again now */
+      if (S.err) render(); /* a list that could not load: load it again now */
+      else setTimeout(function () { if (S.err) render(); }, 1500); /* (the failed request may still be on its way) */
+    } else {
+      if (st.state === 'error' && st.msg) toast(st.msg);
+      else if (st.state === 'off' && prev === 'on') toast('WARP is off');
+      if (S.err) errView(S.errE); /* the WARP part of the error screens follows the state */
+      if (perr) showErr(perr.m, perr.a);
+    }
+  };
   function setting(id) {
     var s = D.set;
     function again() { save(); if (S.route.name === 'settings') render(); }
@@ -459,6 +514,8 @@
     else if (id === 'clearsearch') { D.searches = []; save(); toast('Search history cleared'); }
     else if (id === 'about') toast('NovaPlay 2.0 · ad blocking is on');
     else if (id === 'vlog') videoLog();
+    else if (id === 'warp') { var w0 = warpInfo(); if (w0 && N.warpSet) { N.warpSet(!w0.wanted); if (!w0.wanted) toast('Turning WARP on…'); } }
+    else if (id === 'warpmore') warpSheet();
     else if (id === 'crash') crashSheet(crashInfo());
   }
 
@@ -662,8 +719,9 @@
   }
   function showErr(m, actions) {
     var e = $('#perr');
-    if (!m) { e.classList.remove('on'); e.innerHTML = ''; return; }
-    e.innerHTML = '<p>' + esc(m) + '</p>' + (actions ? '<div class="r2"><button class="btn" data-act="reload">Try again</button><button class="btn ghost" data-act="embed">Use web player</button></div>' : '');
+    if (!m) { S.perr = null; e.classList.remove('on'); e.innerHTML = ''; return; }
+    S.perr = { m: m, a: actions };
+    e.innerHTML = '<p>' + esc(m) + '</p>' + (actions ? '<div class="r2"><button class="btn" data-act="reload">Try again</button><button class="btn ghost" data-act="embed">Use web player</button>' + (warpOffer() ? '<button class="btn ghost" data-act="warpon">Turn on WARP</button>' : '') + '</div>' : '');
     e.classList.add('on');
   }
   function useEmbed(v) {
@@ -841,6 +899,7 @@
   function act(a) {
     var v = S.cur;
     if (a === 'retry') render();
+    else if (a === 'warpon') warpOn();
     else if (a === 'more') { var m = S.more; if (m) { m.auto = 0; m.failed = false; loadMore().then(function (ok) { if (ok) autoMore(); }); } }
     else if (a === 'like' && v) toggleList('liked', v);
     else if (a === 'later' && v) toggleList('later', v);

@@ -10,8 +10,13 @@ android {
         applicationId 'app.novaplay.modern'
         minSdk 26
         targetSdk 34
-        versionCode 5
-        versionName '2.0.4'
+        versionCode 6
+        versionName '2.1.0'
+
+        // the WireGuard engine ships a native library per processor type; phones are ARM
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a'
+        }
     }
 
     // one fixed key, so every new build installs over the previous one
@@ -37,10 +42,18 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
+        // the WireGuard library asks for it
+        coreLibraryDesugaringEnabled true
     }
 
     lint {
         abortOnError false
         checkReleaseBuilds false
     }
+}
+
+dependencies {
+    // built-in Cloudflare WARP: the official WireGuard tunnel library (wireguard-go + Android VpnService)
+    implementation 'com.wireguard.android:tunnel:1.0.20230706'
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
 }

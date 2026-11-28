@@ -13,7 +13,11 @@ import android.content.res.Configuration;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.net.Uri;
+import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
@@ -39,6 +43,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayInputStream;
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Locale;
@@ -67,6 +72,76 @@ public class MainActivity extends Activity {
     };
 
     private static final String PAGE = "file:///android_asset/ui/index.html";
+    private static final int REQ_VPN = 71;
+
+    /** The built-in WARP. One per process: the tunnel it brings up belongs to the process, not to this screen. */
+    private static WarpController warpController;
+
+    private static synchronized WarpController warp(Context c) {
+        if (warpController == null) {
+            Context app = c.getApplicationContext();
+            WgEngine engine = new WgEngine(app);
+            final WarpController w = new WarpController(new WarpStore(new File(app.getNoBackupFilesDir(), "warp.properties")),
+                    engine, WarpController.NET, app.getPackageName());
+            engine.setOnUnexpectedDown(new Runnable() {
+                @Override
+                public void run() {
+                    w.onTunnelDown();
+                }
+            });
+            warpController = w;
+        }
+        return warpController;
+    }
+
+    /** What WARP needs from this screen: the VPN question, a look at the network, a way to tell the page. */
+    private final WarpController.Host warpHost = new WarpController.Host() {
+        @Override
+        public boolean vpnGranted() {
+            try {
+                return VpnService.prepare(MainActivity.this) == null;
+            } catch (RuntimeException e) {
+                return false;
+            }
+        }
+
+        @Override
+        public void askVpn() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        Intent i = VpnService.prepare(MainActivity.this);
+                        if (i == null) {
+                            warp(MainActivity.this).permissionResult(true);
+                        } else {
+                            startActivityForResult(i, REQ_VPN);
+                        }
+                    } catch (RuntimeException e) {
+                        WarpLog.add("the VPN request could not be shown (" + e.getClass().getSimpleName() + ")");
+                        warp(MainActivity.this).permissionResult(false);
+                    }
+                }
+            });
+        }
+
+        @Override
+        public boolean online() {
+            try {
+                ConnectivityManager cm = (ConnectivityManager) getSystemService(Context.CONNECTIVITY_SERVICE);
+                Network n = cm == null ? null : cm.getActiveNetwork();
+                NetworkCapabilities c = n == null ? null : cm.getNetworkCapabilities(n);
+                return c != null && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+            } catch (RuntimeException e) {
+                return true; // cannot tell: try anyway
+            }
+        }
+
+        @Override
+        public void changed() {
+            pushWarp();
+        }
+    };
 
     private FrameLayout root;
     private WebView web;
@@ -101,6 +176,9 @@ public class MainActivity extends Activity {
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
         media = new LocalMediaServer(ua, COOKIES);
         web.loadUrl(PAGE);
+        WarpController w = warp(this);
+        w.setHost(warpHost);
+        w.autoStart(); // brings WARP up again when it was left on (never shows the VPN question by itself)
 
         if (Build.VERSION.SDK_INT >= 33) {
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 1);
@@ -281,6 +359,27 @@ public class MainActivity extends Activity {
         if (web != null) web.evaluateJavascript("window.__onPip&&window.__onPip(" + inPip + ")", null);
     }
 
+    /* ---------- built-in WARP ---------- */
+
+    /** Tells the page the WARP state (the page also asks for it when it needs it). */
+    private void pushWarp() {
+        final WarpController w = warpController;
+        if (w == null) return;
+        final String json = w.json();
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (web != null) web.evaluateJavascript("window.__onWarp&&window.__onWarp(" + json + ")", null);
+            }
+        });
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_VPN) warp(this).permissionResult(resultCode == RESULT_OK);
+    }
+
     /* ---------- lifecycle ---------- */
 
     @Override
@@ -317,6 +416,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         stopService(new Intent(this, PlayService.class));
+        if (warpController != null) warpController.clearHost(warpHost);
         if (media != null) {
             media.stop();
             media = null;
@@ -444,6 +544,60 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void logMedia(String line) {
             MediaLog.add("page: " + line);
+        }
+
+        /** The WARP state as JSON: {"state","msg","wanted","all","port"}; never holds keys. */
+        @JavascriptInterface
+        public String warpState() {
+            try {
+                return warp(MainActivity.this).json();
+            } catch (RuntimeException e) {
+                return "";
+            }
+        }
+
+        @JavascriptInterface
+        public void warpSet(boolean on) {
+            try {
+                WarpController w = warp(MainActivity.this);
+                if (on) w.turnOn();
+                else w.turnOff();
+            } catch (RuntimeException e) {
+                WarpLog.add("warpSet: " + WarpController.describe(e));
+            }
+        }
+
+        @JavascriptInterface
+        public void warpRetry() {
+            try {
+                warp(MainActivity.this).retry();
+            } catch (RuntimeException e) {
+                WarpLog.add("warpRetry: " + WarpController.describe(e));
+            }
+        }
+
+        @JavascriptInterface
+        public void warpAll(boolean all) {
+            try {
+                warp(MainActivity.this).setWholePhone(all);
+            } catch (RuntimeException e) {
+                WarpLog.add("warpAll: " + WarpController.describe(e));
+            }
+        }
+
+        @JavascriptInterface
+        public void warpForget() {
+            try {
+                warp(MainActivity.this).forget();
+            } catch (RuntimeException e) {
+                WarpLog.add("warpForget: " + WarpController.describe(e));
+            }
+        }
+
+        /** What the WARP connection did lately, one line per event (Settings > WARP details shows it). */
+        @JavascriptInterface
+        public String warpLog() {
+            return WarpLog.dump();
         }
 
         @JavascriptInterface

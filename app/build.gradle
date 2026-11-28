@@ -50,10 +50,24 @@ android {
         abortOnError false
         checkReleaseBuilds false
     }
+
+    // show every unit test in the build log
+    testOptions {
+        unitTests.all {
+            testLogging {
+                events 'passed', 'failed', 'skipped'
+                exceptionFormat 'full'
+                showStandardStreams true
+            }
+        }
+    }
 }
 
 dependencies {
     // built-in Cloudflare WARP: the official WireGuard tunnel library (wireguard-go + Android VpnService)
     implementation 'com.wireguard.android:tunnel:1.0.20230706'
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.0.4'
+
+    // checks the configuration text against the real WireGuard parser before an APK is built
+    testImplementation 'junit:junit:4.13.2'
 }

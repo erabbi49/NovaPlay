@@ -23,8 +23,8 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build release APK
-        run: gradle assembleRelease --no-daemon --stacktrace
+      - name: Build release APK (unit tests first: a failing test stops the build)
+        run: gradle testDebugUnitTest assembleRelease --no-daemon --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

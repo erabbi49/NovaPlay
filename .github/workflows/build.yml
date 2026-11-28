@@ -23,7 +23,7 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build release APK (unit tests first: a failing test stops the build)
+      - name: Run the unit tests, then build the release APK
         run: gradle testDebugUnitTest assembleRelease --no-daemon --stacktrace
 
       - name: Upload APK
